@@ -10,6 +10,7 @@
 extern void test();
 extern void uTLB_RefillHandler();
 extern unsigned int exceptionHandler();
+extern void scheduler();
 
 int processCount; 			//numero di processi iniziati ma non terminati 
 int softblockcount;			//numero di processi bloccati
@@ -45,6 +46,17 @@ int main(){
     volatile unsigned int *interval_timer = (volatile unsigned int *)INTERVALTMR;
     *interval_timer = PSECOND; 
     pcb_t *p = allocPcb();                              //allochiamo il primo pcb
+
+    /// setto i parametri di p a null
+    p->p_child = NULL; 
+    p->p_parent = NULL; 
+    p->p_sib = NULL; 
+    p->p_time = 0; 
+    p->p_semAdd = NULL; 
+    p->p_supportStruct = NULL; 
+
+
+    
     p->p_s.pc_epc = (memaddr)test;                      // PC
     p->p_s.status = MSTATUS_MPIE_MASK | MSTATUS_MPP_M;  // kernel mode + interrupt
     p->p_s.mie = MIE_ALL;                               // abilita interrupt
@@ -52,10 +64,15 @@ int main(){
     insertProcQ(&readyQueue, p);                  // mettoin ready queue
     processCount++;                                     // incrementa contatore processi
     
+    scheduler();
     
     return 0;
     
 }
+
+
+    
+
 
 
     
