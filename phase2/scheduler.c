@@ -7,27 +7,48 @@
 #include <uriscv/types.h>
 #include <uriscv/const.h>
 
-void scheduler (list head *readyQueue){
+
+extern int softblockcount; 
+extern struct list_head readyQueue;
+extern struct pcb_PTR current_process;
+
+void scheduler (){
 //In its simplest form whenever the Scheduler is called it should dispatch the “next” process in the Ready Queue.
 //1. Remove the PCB from the head of the Ready Queue and store the pointer to the PCB in the
 //Current Process field.
-pcb t *outProcQ(struct list head *readyQueue, pcb t *p)
+
+current_process = removeProcQ(&readyQueue);
+
 //2. Load 5 milliseconds on the PLT [Section 7.2].
-LDIT(5)
+LDIT(5);
+
+
 //3. Perform a Load Processor State (LDST) [Section 13.2] on the processor state stored in PCB of
 //the Current Process (p_s) of the current CPU.
-LDST(p_s);
+
+LDST(); //CAPIRE COSA CAZZO SIGNIFICA
+
+
 //Dispatching a process transitions it from a “ready” process to a “running” process
 //??
 //The Scheduler should behave in the following manner if the Ready Queue is empty:
+
+
+
 if (emptyProcQ(*readyQueue)){
-//1. If the Process Count is 0, invoke the HALT BIOS service/instruction [Section 13.2]. Consider this a job well done
- HALT();}
+    
+    //1. If the Process Count is 0, invoke the HALT BIOS service/instruction [Section 13.2]. Consider this a job well done
+HALT();
 //Deadlock for PandOSsh is defined as when the Process Count > 0 and the Soft-block Count is
+}
 //zero. Take an appropriate deadlock detected action; invoke the PANIC BIOS service/instruction
 //[Section 13.2].
- if(softblockcount = 0){
- PANIC();}
+
+ if(softblockcount == 0){
+ PANIC();
+}
+
+
 //If the Process Count > 0 and Soft-block Count > 0 enter a Wait State. 
 //Important: Before executing the WAIT instruction, the Scheduler must first set the mie register to enable interrupts and either disable the PLT (also through the mie register) using:
 setMIE(MIE_ALL & ~MIE_MTIE_MASK);
@@ -47,7 +68,3 @@ TLBWR();
 }
 LDST((state_t*) BIOSDATAPAGE);
 }
-
-
-
-
