@@ -9,7 +9,7 @@
 
 extern void test();
 extern void uTLB_RefillHandler();
-extern void exceptionHandler();
+extern unsigned int exceptionHandler();
 
 int processCount; 			//numero di processi iniziati ma non terminati 
 int softblockcount;			//numero di processi bloccati
@@ -26,6 +26,8 @@ int main(){
     passupvector->tlb_refill_handler = (memaddr)uTLB_RefillHandler;
     passupvector->tlb_refill_stackPtr = (memaddr)KERNELSTACK;
     passupvector->exception_handler = (memaddr)exceptionHandler;
+
+
     passupvector->exception_stackPtr = (memaddr)KERNELSTACK;
         
         
@@ -35,23 +37,26 @@ int main(){
     softblockcount = 0; 
     mkEmptyProcQ(&readyQueue);
     current_process = NULL;
-    ///todo roba dei semafori
+    
+    for (int i = 0; i <= NRSEMAPHORES; i++){
+        device_semaphores[i].s_key = 0; //semafori inizializzati a 0 OCCHIO!!!!!! 
+    }
     
     volatile unsigned int *interval_timer = (volatile unsigned int *)INTERVALTMR;
     *interval_timer = PSECOND; 
-    pcb_t *p = allocPcb();
-    RAMTOP()
+    pcb_t *p = allocPcb();                              //allochiamo il primo pcb
     p->p_s.pc_epc = (memaddr)test;                      // PC
     p->p_s.status = MSTATUS_MPIE_MASK | MSTATUS_MPP_M;  // kernel mode + interrupt
     p->p_s.mie = MIE_ALL;                               // abilita interrupt
-
-    insertProcQ(&readyQueue, p);                  // metti in ready queue
+    RAMTOP(p->p_s.gpr[STATE_GPR_LEN]);                  //in teoria stack pointer caricato in ramtop
+    insertProcQ(&readyQueue, p);                  // mettoin ready queue
     processCount++;                                     // incrementa contatore processi
-
-
-
+    
+    
+    return 0;
     
 }
 
 
     
+
