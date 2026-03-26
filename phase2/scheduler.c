@@ -21,6 +21,29 @@ LDST(p_s);
 if (emptyProcQ(*readyQueue)){
 //1. If the Process Count is 0, invoke the HALT BIOS service/instruction [Section 13.2]. Consider this a job well done
  HALT();}
-if(
+//Deadlock for PandOSsh is defined as when the Process Count > 0 and the Soft-block Count is
+//zero. Take an appropriate deadlock detected action; invoke the PANIC BIOS service/instruction
+//[Section 13.2].
+ if(softblockcount = 0){
+ PANIC();}
+//If the Process Count > 0 and Soft-block Count > 0 enter a Wait State. 
+//Important: Before executing the WAIT instruction, the Scheduler must first set the mie register to enable interrupts and either disable the PLT (also through the mie register) using:
+setMIE(MIE_ALL & ~MIE_MTIE_MASK);
+unsigned int status = getSTATUS();
+status |= MSTATUS_MIE_MASK;
+setSTATUS(status);
+WAIT();
+//As outlined above [Section 2], each Processor Pass Up Vector’s Nucleus TLB-Refill event handler
+//address should be set to the address of your TLB-Refill event handler (e.g. uTLB_RefillHandler).
+//The code for this function, for Level 3/Phase 2 testing purposes should be as follows:
+void uTLB_RefillHandler() {
+int prid = getPRID();
+setENTRYHI(0x80000000);
+setENTRYLO(0x00000000);
+TLBWR();
+LDST((state_t*) BIOSDATAPAGE);
+}
+
+
 
 
