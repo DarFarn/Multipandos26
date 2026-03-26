@@ -6,6 +6,8 @@
 #include <uriscv/liburiscv.h>
 #include <uriscv/types.h>
 #include <uriscv/const.h>
+
+void scheduler (list head *readyQueue){
 //In its simplest form whenever the Scheduler is called it should dispatch the “next” process in the Ready Queue.
 //1. Remove the PCB from the head of the Ready Queue and store the pointer to the PCB in the
 //Current Process field.
@@ -41,6 +43,8 @@ int prid = getPRID();
 setENTRYHI(0x80000000);
 setENTRYLO(0x00000000);
 TLBWR();
+
+}
 LDST((state_t*) BIOSDATAPAGE);
 }
 
