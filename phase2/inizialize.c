@@ -7,22 +7,51 @@
 #include <uriscv/types.h>
 #include <uriscv/const.h>
 
-
+extern void test();
+extern void uTLB_RefillHandler();
+extern void exceptionHandler();
 
 int processCount; 			//numero di processi iniziati ma non terminati 
 int softblockcount;			//numero di processi bloccati
 LIST_HEAD(readyQueue);      
 pcb_PTR current_process;    //puntatore al processo corrente
-semd_t device_semaphores;  //QUANTI DEVO FARNE?????????
+semd_t device_semaphores[NRSEMAPHORES];  //occhiooooo?????????
 
-passupvector_t *pvector = (passupvector_t *)PASSUPVECTOR;
+int main(){ 
+    
+        
+        
+    passupvector_t *passupvector = (passupvector_t *)PASSUPVECTOR;
+        
+    passupvector->tlb_refill_handler = (memaddr)uTLB_RefillHandler;
+    passupvector->tlb_refill_stackPtr = (memaddr)KERNELSTACK;
+    passupvector->exception_handler = (memaddr)exceptionHandler;
+    passupvector->exception_stackPtr = (memaddr)KERNELSTACK;
+        
+        
+    initPcbs();
+    initASL();
+    processCount = 0; 
+    softblockcount = 0; 
+    mkEmptyProcQ(&readyQueue);
+    current_process = NULL;
+    ///todo roba dei semafori
+    
+    volatile unsigned int *interval_timer = (volatile unsigned int *)INTERVALTMR;
+    *interval_timer = PSECOND; 
+    pcb_t *p = allocPcb();
+    RAMTOP()
+    p->p_s.pc_epc = (memaddr)test;                      // PC
+    p->p_s.status = MSTATUS_MPIE_MASK | MSTATUS_MPP_M;  // kernel mode + interrupt
+    p->p_s.mie = MIE_ALL;                               // abilita interrupt
 
-pvector->tlb_refll_handler = (memaddr)uTLB_RefillHandler; //da rivedere 
+    insertProcQ(&readyQueue, p);                  // metti in ready queue
+    processCount++;                                     // incrementa contatore processi
 
 
 
+    
+}
 
 
-
-
-
+    
