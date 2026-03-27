@@ -6,19 +6,22 @@
 #include <uriscv/liburiscv.h>
 #include <uriscv/types.h>
 #include <uriscv/const.h>
+#include "../headers/klog.h"
 
 
 extern int softblockcount; 
 extern struct list_head readyQueue;
-extern struct pcb_PTR current_process;
+extern struct pcb_t* current_process;
+
 
 void scheduler (){
 //In its simplest form whenever the Scheduler is called it should dispatch the “next” process in the Ready Queue.
 //1. Remove the PCB from the head of the Ready Queue and store the pointer to the PCB in the
 //Current Process field.
 
-current_process = removeProcQ(&readyQueue);
+klog_print("stai?");
 
+current_process = removeProcQ(&readyQueue);
 //2. Load 5 milliseconds on the PLT [Section 7.2].
 LDIT(5);
 
@@ -26,7 +29,9 @@ LDIT(5);
 //3. Perform a Load Processor State (LDST) [Section 13.2] on the processor state stored in PCB of
 //the Current Process (p_s) of the current CPU.
 
-LDST(); //CAPIRE COSA CAZZO SIGNIFICA
+//come verificare che sia della current cpu
+
+LDST(&current_process->p_s);   
 
 
 //Dispatching a process transitions it from a “ready” process to a “running” process
@@ -35,7 +40,7 @@ LDST(); //CAPIRE COSA CAZZO SIGNIFICA
 
 
 
-if (emptyProcQ(*readyQueue)){
+if (emptyProcQ(&readyQueue)){
     
     //1. If the Process Count is 0, invoke the HALT BIOS service/instruction [Section 13.2]. Consider this a job well done
 HALT();
@@ -64,6 +69,8 @@ int prid = getPRID();
 setENTRYHI(0x80000000);
 setENTRYLO(0x00000000);
 TLBWR();
+
+klog_print("porcamadonna");
 
 }
 LDST((state_t*) BIOSDATAPAGE);
