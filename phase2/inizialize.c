@@ -24,8 +24,7 @@ pcb_t* current_process;    //puntatore al processo corrente
 semd_t device_semaphores[NRSEMAPHORES];  //occhiooooo?????????
 
 int main(){ 
-    
-    klog_print("ciao");    
+    klog_print("init");
     passupvector_t *passupvector = (passupvector_t *)PASSUPVECTOR;
         
     passupvector->tlb_refill_handler = (memaddr)uTLB_RefillHandler;
@@ -69,7 +68,6 @@ int main(){
     insertProcQ(&readyQueue, p);                  // mettoin ready queue
     processCount++;                                     // incrementa contatore processi
 
-    klog_print("come");
     
     scheduler();
     
@@ -79,10 +77,3 @@ int main(){
 
 
     
-
-    
-
-
-
-    
-
