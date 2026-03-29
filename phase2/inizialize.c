@@ -6,6 +6,11 @@
 #include <uriscv/liburiscv.h>
 #include <uriscv/types.h>
 #include <uriscv/const.h>
+#include "../headers/klog.h"
+
+
+
+
 
 extern void test();
 extern void uTLB_RefillHandler();
@@ -15,18 +20,17 @@ extern void scheduler();
 int processCount; 			//numero di processi iniziati ma non terminati 
 int softblockcount;			//numero di processi bloccati
 LIST_HEAD(readyQueue);      
-pcb_PTR current_process;    //puntatore al processo corrente
+pcb_t* current_process;    //puntatore al processo corrente
 semd_t device_semaphores[NRSEMAPHORES];  //occhiooooo?????????
 
 int main(){ 
     
-        
-        
+    klog_print("ciao");    
     passupvector_t *passupvector = (passupvector_t *)PASSUPVECTOR;
         
     passupvector->tlb_refill_handler = (memaddr)uTLB_RefillHandler;
     passupvector->tlb_refill_stackPtr = (memaddr)KERNELSTACK;
-    passupvector->exception_handler = (memaddr)exceptionHandler;
+    passupvector->exception_handler = (memaddr)exceptionHandler();
 
 
     passupvector->exception_stackPtr = (memaddr)KERNELSTACK;
@@ -48,9 +52,10 @@ int main(){
     pcb_t *p = allocPcb();                              //allochiamo il primo pcb
 
     /// setto i parametri di p a null
-    p->p_child = NULL; 
+    INIT_LIST_HEAD(&p->p_child) ;   //da ricontrollare che sia il modo giusto di settarli
+    INIT_LIST_HEAD(&p->p_sib); 
+    
     p->p_parent = NULL; 
-    p->p_sib = NULL; 
     p->p_time = 0; 
     p->p_semAdd = NULL; 
     p->p_supportStruct = NULL; 
@@ -63,6 +68,8 @@ int main(){
     RAMTOP(p->p_s.gpr[STATE_GPR_LEN]);                  //in teoria stack pointer caricato in ramtop
     insertProcQ(&readyQueue, p);                  // mettoin ready queue
     processCount++;                                     // incrementa contatore processi
+
+    klog_print("come");
     
     scheduler();
     
@@ -70,6 +77,8 @@ int main(){
     
 }
 
+
+    
 
     
 
