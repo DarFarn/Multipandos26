@@ -11,15 +11,15 @@
 extern int processCount;
 extern int softblockcount; 
 extern struct list_head readyQueue;
-extern struct pcb_t* current_process;
+extern struct
+ pcb_t* current_process;
 
 
 void scheduler (){
-        //In its simplest form whenever the Scheduler is called it should dispatch the “next” process in the Ready Queue.
-        //1. Remove the PCB from the head of the Ready Queue and store the pointer to the PCB in the
+    //In its simplest form whenever the Scheduler is called it should dispatch the “next” process in the Ready Queue.
+    //1. Remove the PCB from the head of the Ready Queue and store the pointer to the PCB in the
     //Current Process field.
 
-    klog_print("stai?");
 
     current_process = removeProcQ(&readyQueue);
     //2. Load 5 milliseconds on the PLT [Section 7.2].
@@ -39,7 +39,7 @@ void scheduler (){
     
     //The Scheduler should behave in the following manner if the Ready Queue is empty:
     
-    if (emptyProcQ(&readyQueue){            
+    if (emptyProcQ(&readyQueue)){            
     
     
     //1. If the Process Count is 0, invoke the HALT BIOS service/instruction [Section 13.2]. Consider this a job well done
@@ -70,17 +70,6 @@ void scheduler (){
     status |= MSTATUS_MIE_MASK;
     setSTATUS(status);
     WAIT();
-    //As outlined above [Section 2], each Processor Pass Up Vector’s Nucleus TLB-Refill event handler
-    //address should be set to the address of your TLB-Refill event handler (e.g. uTLB_RefillHandler).
-    //The code for this function, for Level 3/Phase 2 testing purposes should be as follows:
-    void uTLB_RefillHandler() {
-    int prid = getPRID();
-    setENTRYHI(0x80000000);
-    setENTRYLO(0x00000000);
-    TLBWR();
-
-    klog_print("porcamadonna");
-
-    }
+    
     LDST((state_t*) BIOSDATAPAGE);
 }
