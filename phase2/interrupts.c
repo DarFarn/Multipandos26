@@ -7,6 +7,7 @@
 #include <uriscv/types.h>
 #include <uriscv/const.h>
 #include "../headers/klog.h"
+#include "scheduler.h"
 
 extern void scheduler();
 
