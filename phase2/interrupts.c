@@ -8,6 +8,8 @@
 #include <uriscv/const.h>
 #include "../headers/klog.h"
 
+extern void scheduler();
+
 //External Nucleus global variables
 extern int processCount;
 extern int softblockcount;
@@ -43,19 +45,105 @@ extern int *device_semaphores[];
 #define PLT_INT_LINE 1 //Serve per time slices
 #define INTERVAL_TIMER_LINE 2 //serve per pseudo-clock da 100ms ticks
 
-//Calcolo del device number dall'interrupt bit map e l'interrupt line. Ritorna -1 se non trova il device
-int getDeviceNumber(int intLineNo, unsigned int bitMap) {
-    int devNo;
-    for (devNo = 0; devNo < DEVICES_PER_LINE; devNo++) {
-        if (bitMap & (1 << devNo)) {
-            return devNo; //pending interrupt trovato
-        }
-    }
-    return -1;
-}
 
 //Calcolo dell'inidirizzo del device’s device register
 unsigned int getDeviceRegAddr(int intLineNo, int devNo) {
     return DEVICE_REG_BASE + ((intLineNo - 3) * DEV_REG_SIZE) + (devNo * 0x10);
 }
+
+//Funzione che trova il device con proprità più alta. Ritorna -1 se non c'è
+int getHighestPriorityDevice(unsigned int bitMap) {
+    int devNo;
+    for (devNo = 0; devNo < DEVICES_PER_LINE; devNo++) {
+        if (bitMap & (1 << devNo)) {
+            return devNo;
+        }
+    }
+    return -1;
+}
+
+//Semaphore index per un device
+//Linee 3-6: 4 linee * 8 devices --> 32 semafoti (0-31)
+//Ogni Terminal Device ha 2 semafori --> a 8 terminal corrispondono 16 semafori (32-47)
+int getSemaphoreIndex(int intLineNo, int devNo, int isTransmitter) {
+    if (intLineNo == 7) {
+        return 32 + (devNo * 2) + (isTransmitter ? 1 : 0);
+    } else {
+        int lineOffset = intLineNo - 3; //Linee 3-6
+        return (lineOffset * DEVICES_PER_LINE) + devNo;
+    }
+}
+
+
+//Parte 7.1 Non-Timer Interrupts
+void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
+    int devNo;
+    unsigned int devRegAddr;
+    unsigned int *statusReg;
+    unsigned int *commandReg;
+    unsigned int statusCode;
+    pcb_t *unblockedProc;
+    int semIndex;
+    int isTerminal = (intLineNo == 7);
+    int isTransmitter = 0;
+    
+    //Trovare il device con priorità maggiore
+    devNo = getHighestPriorityDevice(bitMap);
+    if (devNo < 0) {
+        return;  //Non è stato trovato nessun dispositivo
+    }
+    
+    /* For terminal devices, check transmitter priority */
+    if (isTerminal) {
+        unsigned int termBase = TERM_REG_BASE + (devNo * DEV_REG_SIZE);
+        unsigned int *transmStatus = (unsigned int *)(termBase + TRANSM_STATUS_OFFSET);
+        unsigned int *recvStatus = (unsigned int *)(termBase + RECV_STATUS_OFFSET);
+        
+        /* Transmitter has higher priority than receiver */
+        if ((*transmStatus & STATUSMASK) != 0) {
+            isTransmitter = 1;
+            statusReg = (unsigned int *)(termBase + TRANSM_STATUS_OFFSET);
+            commandReg = (unsigned int *)(termBase + TRANSM_COMMAND_OFFSET);
+        } else {
+            isTransmitter = 0;
+            statusReg = (unsigned int *)(termBase + RECV_STATUS_OFFSET);
+            commandReg = (unsigned int *)(termBase + RECV_COMMAND_OFFSET);
+        }
+    } else {
+        //Caloclo device register adress
+        devRegAddr = getDeviceRegAddr(intLineNo, devNo);
+        statusReg = (unsigned int *)(devRegAddr + STATUS_OFFSET);
+        commandReg = (unsigned int *)(devRegAddr + COMMAND_OFFSET);
+    }
+    
+   //Salvataggio status code
+    statusCode = *statusReg & STATUSMASK;
+    
+    //Acknowledgement dell'interrupt
+    *commandReg = ACK;
+    
+    // Operazione V sul device semaphore
+    semIndex = getSemaphoreIndex(intLineNo, devNo, isTransmitter);
+    unblockedProc = removeBlocked(device_semaphores[semIndex]);
+    
+    //Sbloccare un processo se ce ne sono di bloccati
+    if (unblockedProc != NULL) {
+        // Inseriemnto status code nel registro a0 del PCB appena sbloccato
+        unblockedProc->p_s.regs[REG_A0] = statusCode;
+        unblockedProc->p_semAdd = NULL; //Processo non più bloccato 
+        softblockcount--;
+        
+        //Inserimento del PCB nella RadyQueue
+        insertProcQ(&readyQueue, unblockedProc);
+    }
+    
+    //Return Current Process o chiama lo scheduler
+    if (current_process != NULL) {
+        state_t *exceptionState = (state_t *)BIOSDATAPAGE;
+        LDST(exceptionState);
+    } else {
+        scheduler();
+    }
+}
+
 
