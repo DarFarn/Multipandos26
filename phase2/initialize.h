@@ -1,0 +1,1 @@
+#define pseudoclock_semaphore device_semaphores[NRSEMAPHORES - 1] // ultimo semaforo usato per il pseudoclock
