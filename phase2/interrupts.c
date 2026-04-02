@@ -148,3 +148,23 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
 }
 
 
+//Parte 7.2 Processor Local Timer (PLT) Interrupts
+void handlePLTInterrupt(void) {
+    //Acknowledge PLT interrupt mettendo nel timer un nuovo valore
+    setTIMER(TIMESLICE);
+    
+    //Copriare stato CPU nel PCB del Current Process
+    state_t *exceptionState = (state_t *)BIOSDATAPAGE;
+    current_process->p_s = *exceptionState;
+    
+    //Aggiornemento dell'accumulated CPU time
+    cpu_t currentTime;
+    STCK(currentTime);
+    currentProcess->p_time += (currentTime - processStartTime); 
+    
+    //Inserimento Current Process nella ReadyQueue
+    insertProcQ(&readyQueue, current_process);
+    current_process = NULL;
+    
+    scheduler();
+}
