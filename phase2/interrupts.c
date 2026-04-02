@@ -16,7 +16,7 @@ extern int processCount;
 extern int softblockcount;
 extern struct list_head readyQueue;
 extern pcb_t *current_process;
-extern int *device_semaphores[];
+extern int device_semaphores[NRSEMAPHORES];
 
 //Device register base addresses
 #define INTERRUPT_BIT_MAP 0x10000040 
