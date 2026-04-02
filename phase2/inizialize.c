@@ -21,7 +21,7 @@ int processCount; 			//numero di processi iniziati ma non terminati
 int softblockcount;			//numero di processi bloccati
 LIST_HEAD(readyQueue);      
 pcb_t* current_process;    //puntatore al processo corrente
-semd_t device_semaphores[NRSEMAPHORES];  //occhiooooo?????????
+int device_semaphores[NRSEMAPHORES];  //occhiooooo?????????
 
 int main(){ 
     klog_print("init");
@@ -42,8 +42,8 @@ int main(){
     mkEmptyProcQ(&readyQueue);
     current_process = NULL;
     
-    for (int i = 0; i <= NRSEMAPHORES; i++){
-        device_semaphores[i].s_key = 0; //semafori inizializzati a 0 OCCHIO!!!!!! 
+    for (int i = 0; i < NRSEMAPHORES; i++){
+        device_semaphores[i] = 0; //semafori inizializzati a 0 OCCHIO!!!!!! 
     }
     
     volatile unsigned int *interval_timer = (volatile unsigned int *)INTERVALTMR;
