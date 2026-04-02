@@ -1,37 +1,45 @@
 #include <uriscv/liburiscv.h>
-#include "const.h"
-#include "types.h"
-#include "listx.h"
+#include "../headers/const.h"
+#include "../headers/types.h"
+#include "../headers/listx.h"
 #include "../phase1/headers/asl.h"
 #include "../phase1/headers/pcb.h"
 #include <uriscv/types.h>
 #include <uriscv/const.h>
-#include "exceptions.h"
-#include "scheduler.h"
+#include "../phase2/headers/scheduler.h"
+#include "../phase2/headers/initialize.h"
 
 extern int processCount;
 extern int softblockcount;
 extern struct list_head readyQueue;
 extern pcb_t *current_process;
-extern cpu_t *startTime; // i need that, deve essere fatto dallo scheduler
-extern int deviceSemaphores[SEMDEVLEN]; // intero o semd_t??????????????
-extern int pseudoClockSemaphore;
+extern cpu_t startTime; // i need that, deve essere fatto dallo scheduler
+extern int device_semaphores[SEMDEVLEN];
+
 
 extern void scheduler();
 extern void interruptHandler();
 
-void uTLB_RefillHandler() {
-    setENTRYHI(0x80000000);
-    setENTRYLO(0x00000000);
-    TLBWR();
-    LDST((state_t*) BIOSDATAPAGE);
+// void uTLB_RefillHandler() {
+//    setENTRYHI(0x80000000);
+//    setENTRYLO(0x00000000);
+//    TLBWR();
+//    LDST((state_t*) BIOSDATAPAGE);
+//}
+
+
+void *memcpy(void *dest, const void *src, unsigned int n) { //BOOOOOHH
+    char *d = dest;
+    const char *s = src;
+    while (n--) *d++ = *s++;
+    return dest;
 }
 
 void updateCPUtime(){
     cpu_t now;
     STCK(now); 
-    current_process->p_time = current_process->p_time + (now - *startTime);
-    startTime = now;
+    current_process->p_time = current_process->p_time + (now - startTime);
+    startTime = now; //PROBLEMA 1
 }
 
 void createProcess(state_t *state){
@@ -73,21 +81,13 @@ void processKiller(pcb_t* p){
     outChild(p);
     if(p->p_semAdd != NULL){
         outBlocked(p);
-        if((p->p_semAdd >= &deviceSemaphores[0] && p->p_semAdd < &deviceSemaphores[SEMDEVLEN]) || p->p_semAdd == &pseudoClockSemaphore){
+        if(p->p_semAdd >= &device_semaphores[0] && p->p_semAdd <= &pseudoclock_semaphore){
             softblockcount--;
         }
         p->p_semAdd = NULL;
     }
     freePcb(p);
     processCount--;
-}
-
-pcb_t* findProcess(int pid){
-    pcb_t* root = current_process;
-    while(root->p_parent != NULL){
-        root = root->p_parent;
-    }
-    return processFinder(root, pid);
 }
 
 pcb_t* processFinder(pcb_t* root, int pid){ 
@@ -102,6 +102,15 @@ pcb_t* processFinder(pcb_t* root, int pid){
         if(res != NULL) return res;
     }
     return NULL;
+}
+
+
+pcb_t* findProcess(int pid){
+    pcb_t* root = current_process;
+    while(root->p_parent != NULL){
+        root = root->p_parent;
+    }
+    return processFinder(root, pid);
 }
 
 void terminateProcess(state_t *state){
@@ -196,7 +205,7 @@ void doIO(state_t *state){ //???????????????????fatta con chat??????????????????
     }
     *(int *)commandAddr = commandValue;  
     
-    semaphoreP(&deviceSemaphores[semIndex]);
+    semaphoreP(&device_semaphores[semIndex]);
     
     // Note: The status will be set in a0 when the process resumes after interrupt
     // se ne dovrebbe occupare l'interrupt handler
@@ -205,22 +214,22 @@ void doIO(state_t *state){ //???????????????????fatta con chat??????????????????
 void getCPUtime(state_t *state){
     cpu_t currentTime;
     STCK(currentTime);
-    cpu_t elapsedTime = currentTime - *startTime;  // supponendo che startTime sia settato bene dallo scheduler
+    cpu_t elapsedTime = currentTime - startTime;  // supponendo che startTime sia settato bene dallo scheduler
     // startTime va resettato ogni volta che viene dispachato un processo
     state->reg_a0 = current_process
     ->p_time + elapsedTime;
 }
 
 void waitForClock(state_t *state){
-    semaphoreP(&pseudoClockSemaphore);
+    semaphoreP(&pseudoclock_semaphore);
 }
 
 void getSupportData(state_t *state){
     if(current_process->p_supportStruct != NULL){
-        state->reg_a0 = (support_t *) current_process->p_supportStruct; // lo devo ritornare come struct o unsigned int? boh
+        state->reg_a0 = (unsigned int) current_process->p_supportStruct; // lo devo ritornare come struct o unsigned int? boh
     }
     else{
-        state->reg_a0 = NULL;
+        state->reg_a0 = (unsigned int) NULL; // PROBLEMNA 2
     }
 }
 
@@ -244,27 +253,6 @@ void yield(state_t *state){
     list_add_tail(&(current_process->p_list), &readyQueue); // not sure se vada bene mettere current_process->p_lst così
     scheduler();
 }
-
-void exceptionHandler(){
-    state_t *savedState = GET_EXCEPTION_STATE_PTR(0);
-    unsigned int cause = getCAUSE();
-    unsigned int excCode = (cause & GETEXECCODE) >> CAUSESHIFT;
-    if(CAUSE_IP_GET(cause, IL_CPUTIMER) || CAUSE_IP_GET(cause, IL_TIMER) || CAUSE_IP_GET(cause, IL_DISK) || 
-       CAUSE_IP_GET(cause, IL_FLASH) || CAUSE_IP_GET(cause, IL_ETHERNET) || CAUSE_IP_GET(cause, IL_PRINTER) || 
-       CAUSE_IP_GET(cause, IL_TERMINAL)){  
-        interruptHandler();
-    }
-    else if(excCode >= 24 && excCode <= 28){ 
-        tlbHandler();
-    }
-    else if(excCode == 8 || excCode == 11){ 
-        syscallHandler(savedState);
-    }
-    else if((excCode >= 0 && excCode <=7)||excCode == 9 || excCode == 10 || (excCode >= 12 && excCode <=23)){  
-        programTrapHandler();
-    }
-    else programTrapHandler(); // per eccezioni non previste, le tratto come program trap
-}   
 
 void passUpOrDie(int index) {
     if (current_process->p_supportStruct == NULL) {
@@ -369,3 +357,24 @@ void syscallHandler(state_t *state){
         programTrapHandler();
     }
 }
+
+void exceptionHandler(){
+    state_t *savedState = GET_EXCEPTION_STATE_PTR(0);
+    unsigned int cause = getCAUSE();
+    unsigned int excCode = (cause & GETEXECCODE) >> CAUSESHIFT;
+    if(CAUSE_IP_GET(cause, IL_CPUTIMER) || CAUSE_IP_GET(cause, IL_TIMER) || CAUSE_IP_GET(cause, IL_DISK) || 
+       CAUSE_IP_GET(cause, IL_FLASH) || CAUSE_IP_GET(cause, IL_ETHERNET) || CAUSE_IP_GET(cause, IL_PRINTER) || 
+       CAUSE_IP_GET(cause, IL_TERMINAL)){  
+        interruptHandler();
+    }
+    else if(excCode >= 24 && excCode <= 28){ 
+        tlbHandler();
+    }
+    else if(excCode == 8 || excCode == 11){ 
+        syscallHandler(savedState);
+    }
+    else if((excCode >= 0 && excCode <=7)||excCode == 9 || excCode == 10 || (excCode >= 12 && excCode <=23)){  
+        programTrapHandler();
+    }
+    else programTrapHandler(); // per eccezioni non previste, le tratto come program trap
+}   
