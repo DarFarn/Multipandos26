@@ -14,7 +14,7 @@ extern void scheduler();
 //External Nucleus global variables
 extern int processCount;
 extern int softblockcount;
-extern struct list_head readyQueue;
+extern LIST_HEAD(readyQueue);
 extern pcb_t *current_process;
 extern int device_semaphores[NRSEMAPHORES];
 
