@@ -152,7 +152,7 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
 
 
 //Parte 7.2 Processor Local Timer (PLT) Interrupts
-void handlePLTInterrupt(void) {
+void handlePLTInterrupt() {
     //Acknowledge PLT interrupt mettendo nel timer un nuovo valore
     setTIMER(TIMESLICE);
     
