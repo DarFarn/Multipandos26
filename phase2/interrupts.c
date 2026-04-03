@@ -65,7 +65,7 @@ int getHighestPriorityDevice(unsigned int bitMap) {
 }
 
 //Semaphore index per un device
-//Linee 3-6: 4 linee * 8 devices --> 32 semafoti (0-31)
+//Linee 3-6: 4 linee * 8 devices --> 32 semafori (0-31)
 //Ogni Terminal Device ha 2 semafori --> a 8 terminal corrispondono 16 semafori (32-47)
 int getSemaphoreIndex(int intLineNo, int devNo, int isTransmitter) {
     if (intLineNo == 7) {
