@@ -175,7 +175,7 @@ void handlePLTInterrupt() {
 
 
 //Parte 7.3 The System-wide Interval Timer and the Pseudo-clock
-void handleIntervalTimerInterrupt(void) {
+void handleIntervalTimerInterrupt() {
     /* Acknowledge interrupt con reload di Interval Timer */
     LDIT(PSECOND);
     
