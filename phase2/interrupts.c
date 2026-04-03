@@ -238,7 +238,7 @@ int findHighestPriorityInterrupt(unsigned int *bitMap) {
 
 //Main Interrupt Exception Handler
 //Chimato da exceptionHandler quando CAUSE_IS_INT è true
-void interruptHandler(void) {
+void interruptHandler() {
     unsigned int bitMap = 0;
     int intLineNo;
     
