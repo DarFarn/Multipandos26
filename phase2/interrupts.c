@@ -16,6 +16,7 @@ extern int processCount;
 extern int softblockcount;
 extern LIST_HEAD(readyQueue);
 extern pcb_t *current_process;
+extern cpu_t startTime;
 extern int device_semaphores[NRSEMAPHORES];
 
 //Device register base addresses
@@ -158,9 +159,9 @@ void handlePLTInterrupt(void) {
     current_process->p_s = *exceptionState;
     
     //Aggiornemento dell'accumulated CPU time
-    cpu_t currentTime;
+    cpu_t startTime;
     STCK(currentTime);
-    currentProcess->p_time += (currentTime - processStartTime); 
+    currentProcess->p_time += (currentTime - startTime); 
     
     //Inserimento Current Process nella ReadyQueue
     insertProcQ(&readyQueue, current_process);
