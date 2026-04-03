@@ -197,3 +197,41 @@ void handleIntervalTimerInterrupt(void) {
         scheduler();
     }
 }
+
+
+//Non ho ben capito, chat
+//Find highest priority pending interrupt 
+int findHighestPriorityInterrupt(unsigned int *bitMap) {
+    unsigned int cause = getCAUSE();
+    int intLineNo = 0;
+    
+    /* Extract exception code using GETEXECCODE (0x7C = bits 2-6) */
+    /* CAUSE_EXCCODE_MASK is not defined in your const.h, so use GETEXECCODE */
+    unsigned int excCode = cause & GETEXECCODE;
+    
+    // Interrupt Line map Tabella 1
+    switch (excCode) {
+        case 7:  intLineNo = 1; break;  
+        case 3:  intLineNo = 2; break;  
+        case 17: intLineNo = 3; break;  
+        case 18: intLineNo = 4; break;  
+        case 19: intLineNo = 5; break;  
+        case 20: intLineNo = 6; break;  
+        case 21: intLineNo = 7; break;  
+        default: return 0;  //Sconosciuto
+    }
+    
+    /* For device interrupts (lines 3-7), read the Interrupting Devices Bit Map */
+    if (intLineNo >= 3) {
+        /* Bit Map starts at 0x10000040, each line is 4 bytes */
+                unsigned int *bitMapAddr = (unsigned int *)(INTERRUPT_BIT_MAP + ((intLineNo - 3) * 4));
+        *bitMap = *bitMapAddr;
+        
+        /* Spurious interrupt: line indicated but no device bit set */
+        if (*bitMap == 0) {
+            return 0;
+        }
+    }
+    
+    return intLineNo;
+}
