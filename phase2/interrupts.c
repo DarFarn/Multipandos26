@@ -17,6 +17,7 @@ extern int softblockcount;
 extern LIST_HEAD(readyQueue);
 extern pcb_t *current_process;
 extern cpu_t startTime;
+extern int pseudoClockSemaphore; //Dovrebbe essere in initialize.c
 extern int device_semaphores[NRSEMAPHORES];
 
 //Device register base addresses
