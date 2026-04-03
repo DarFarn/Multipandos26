@@ -235,3 +235,33 @@ int findHighestPriorityInterrupt(unsigned int *bitMap) {
     
     return intLineNo;
 }
+
+//Main Interrupt Exception Handler
+//Chimato da exceptionHandler quando CAUSE_IS_INT è true
+void interruptHandler(void) {
+    unsigned int bitMap = 0;
+    int intLineNo;
+    
+    //Trova interrupt con priorità più alta
+    intLineNo = findHighestPriorityInterrupt(&bitMap);
+    
+    if (intLineNo == 0) {
+        //se l'interrupt non esiste
+        return;
+    }
+    
+    switch (intLineNo) {
+        case PLT_INT_LINE:
+            handlePLTInterrupt();
+            break;
+            
+        case INTERVAL_TIMER_LINE:
+            handleIntervalTimerInterrupt();
+            break;
+            
+        default:
+            //Device interrupts (lines 3-7)
+            handleNonTimerInterrupt(intLineNo, bitMap);
+            break;
+    }
+}
