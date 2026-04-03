@@ -170,3 +170,29 @@ void handlePLTInterrupt(void) {
     
     scheduler();
 }
+
+
+
+//Parte 7.3 The System-wide Interval Timer and the Pseudo-clock
+void handleIntervalTimerInterrupt(void) {
+    /* Acknowledge interrupt con reload di Interval Timer */
+    LDIT(PSECOND);
+    
+    //Ublocking PCB waiting for Pseudo-clock tick 
+    pcb_t *unblockedProc;
+    
+    while ((unblockedProc = removeBlocked(&pseudoClockSemaphore)) != NULL) {
+        unblockedProc->p_s.regs[REG_A0] = 0;  //status code
+        unblockedProc->p_semAdd = NULL;
+        softblockcount--;
+        insertProcQ(&readyQueue, unblockedProc);
+    }
+    
+    /* Return to Current Process or call Scheduler */
+    if (current_process != NULL) {
+        state_t *exceptionState = (state_t *)BIOSDATAPAGE;
+        LDST(exceptionState);
+    } else {
+        scheduler();
+    }
+}
