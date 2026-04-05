@@ -8,13 +8,14 @@
 #include <uriscv/const.h>
 #include "../phase2/headers/scheduler.h"
 #include "../phase2/headers/initialize.h"
+#include "../headers/klog.h"
 
 extern int processCount;
 extern int softblockcount;
 extern struct list_head readyQueue;
 extern pcb_t *current_process;
-extern cpu_t startTime; // i need that, deve essere fatto dallo scheduler
-extern int device_semaphores[SEMDEVLEN];
+extern cpu_t processStartTime; // i need that, deve essere fatto dallo scheduler
+extern int device_semaphores[];
 
 
 extern void scheduler();
@@ -38,34 +39,33 @@ void *memcpy(void *dest, const void *src, unsigned int n) { //BOOOOOHH
 void updateCPUtime(){
     cpu_t now;
     STCK(now); 
-    current_process->p_time = current_process->p_time + (now - startTime);
-    startTime = now; //PROBLEMA 1
+    current_process->p_time = current_process->p_time + (now - processStartTime);
+    processStartTime = now; //PROBLEMA 1
 }
 
 void createProcess(state_t *state){
+    klog_print("STO PER CRAFTARE UN PROCESSO\n");
     pcb_t *newProcess = allocPcb();
     if (newProcess == NULL){
         state->reg_a0 = -1;
         return;
     }
-    if(state->reg_a1){
-        newProcess->p_s = *((state_t *) state->reg_a1);
-    } 
+    newProcess->p_s = *((state_t *) state->reg_a1);
     if(state->reg_a2){
-        newProcess->p_supportStruct = (support_t *) state->reg_a2;  
+        newProcess->p_prio = state->reg_a2;  
+    }
+    else{
+        newProcess->p_prio = 0;
+    }
+    if (state->reg_a3){
+        newProcess->p_supportStruct = (support_t *) state->reg_a3;
     }
     else{
         newProcess->p_supportStruct = NULL;
     }
     newProcess->p_time = 0;
     newProcess->p_semAdd = NULL;
-    if(state->reg_a3){
-        newProcess->p_prio = state->reg_a3;
-    }
-    else{
-        newProcess->p_prio = 0;
-    }
-
+    
     insertChild(current_process, newProcess);
     insertProcQ(&readyQueue, newProcess);
     processCount++;
@@ -81,7 +81,7 @@ void processKiller(pcb_t* p){
     outChild(p);
     if(p->p_semAdd != NULL){
         outBlocked(p);
-        if(p->p_semAdd >= &device_semaphores[0] && p->p_semAdd <= &pseudoclock_semaphore){
+        if(p->p_semAdd >= &device_semaphores[0] && p->p_semAdd <= &device_semaphores[PSEUDOCLOCK_INDEX]){
             softblockcount--;
         }
         p->p_semAdd = NULL;
@@ -116,11 +116,16 @@ pcb_t* findProcess(int pid){
 void terminateProcess(state_t *state){
     if(state->reg_a1 == 0){
         processKiller(current_process);
+        current_process = NULL;
     }
     else{
         pcb_t* toKill = findProcess(state->reg_a1);
         if(toKill == NULL){
             return;
+        }
+        if(toKill == current_process){
+            current_process = NULL;
+            
         }
         processKiller(toKill);
     }
@@ -128,6 +133,7 @@ void terminateProcess(state_t *state){
 }
 
 void passeren(state_t* state){
+    klog_print("STARTANDO LA P OPERATION\n");
     int *semAdd = (int *)state->reg_a1; // intero o puntatore ad un'intero??????
     (*semAdd)--;
     if(*semAdd < 0){
@@ -135,10 +141,11 @@ void passeren(state_t* state){
         insertBlocked(semAdd, current_process);
         scheduler();
     }
-    else return;    
+    return;    
 }
 
 void verhogen(state_t* state){
+    klog_print("starting V operation\n");
     int *semAdd = (int *)state->reg_a1; 
     (*semAdd)++;
     if(*semAdd <= 0){
@@ -148,7 +155,8 @@ void verhogen(state_t* state){
             insertProcQ(&readyQueue, toFree);
         }
     }
-    else return;    
+    klog_print("V almost done");
+    return;    
 }
 
 void semaphoreP(int *semAdd){
@@ -159,7 +167,7 @@ void semaphoreP(int *semAdd){
         softblockcount++;
         scheduler();
     }
-    else return;    
+    return;    
 }
 
 void semaphoreV(int *semAdd){
@@ -174,7 +182,7 @@ void semaphoreV(int *semAdd){
     }
     else return;    
 }
-
+/*
 void doIO(state_t *state){ //???????????????????fatta con chat?????????????????????????????????
     memaddr commandAddr = (memaddr) state->reg_a1;  // Address of the command field
     int commandValue = (int) state->reg_a2;
@@ -210,18 +218,64 @@ void doIO(state_t *state){ //???????????????????fatta con chat??????????????????
     // Note: The status will be set in a0 when the process resumes after interrupt
     // se ne dovrebbe occupare l'interrupt handler
 }
+    */
+
+void doIO(state_t *state) {
+    klog_print("STARTANDO LA DOIO OPERATION\n");
+    memaddr commandAddr = (memaddr) state->reg_a1;
+    int commandValue    = (int) state->reg_a2;
+
+    // Figure out which line and device this address belongs to
+    int offset    = commandAddr - START_DEVREG;   // offset from 0x10000054
+    int lineIndex = offset / 0x80;                // which interrupt line (0-4)
+    int devNo     = (offset % 0x80) / 0x10;       // which device (0-7)
+    int line      = lineIndex + 3;                // actual line number (3-7)
+
+    int semIndex;
+    if (line >= 3 && line <= 6) {
+        semIndex = lineIndex * DEVPERINT + devNo;
+    } else if (line == 7) {
+        // Terminal: figure out recv vs transmit from the field offset within device
+        memaddr termBase  = START_DEVREG + lineIndex * 0x80 + devNo * 0x10;
+        int fieldOffset   = commandAddr - termBase;
+        // RECV_COMMAND is at offset 4 (field 1), TRANSM_COMMAND is at offset 12 (field 3)
+        if (fieldOffset == 4) {
+            semIndex = (DEVINTNUM - 1) * DEVPERINT + devNo * 2;     // recv
+        } else {
+            semIndex = (DEVINTNUM - 1) * DEVPERINT + devNo * 2 + 1; // transmit
+        }
+    } else {
+        state->reg_a0 = -1;
+        return;
+    }
+    klog_print("doIO addr:");
+    klog_print_hex(commandAddr);
+    klog_print("semIdx:");
+    klog_print_dec(semIndex);
+
+    // Write command to device register
+    *(int *)commandAddr = commandValue;
+
+    // Block on the device semaphore
+    semaphoreP(&device_semaphores[semIndex]);
+    // status will be placed in a0 by the interrupt handler when unblocked
+}
 
 void getCPUtime(state_t *state){
     cpu_t currentTime;
     STCK(currentTime);
-    cpu_t elapsedTime = currentTime - startTime;  // supponendo che startTime sia settato bene dallo scheduler
+    cpu_t elapsedTime = currentTime - processStartTime;  // supponendo che startTime sia settato bene dallo scheduler
+    // qual'è la differenza tra elapsedTime e current_process->p_time? elapsedTime è il tempo trascorso dall'ultimo dispatch, mentre p_time è il tempo totale accumulato dal processo fino ad ora. Quindi per ottenere il tempo totale fino ad ora, devo sommare elapsedTime a p_time.
+    // ovvero elapsedTime rappresenta il tempo trascorso da quando ha ripreso l'esecuzione l'ultima volta, mentre p_time rappresenta il tempo totale accumulato dal processo fino a quel momento. Quindi, per ottenere il tempo totale fino ad ora, devo sommare elapsedTime a p_time.
+    // quindi startTime invece è il timestamp del momento in cui il processo è stato rilanciato, e viene aggiornato ogni volta che il processo riprende l'esecuzione
+    // dopo essere stato bloccato. è quidni un contatore che viene resettato
+    // ogni volta che lancio un processo aggiorno startTime con il timestamp attuale
     // startTime va resettato ogni volta che viene dispachato un processo
-    state->reg_a0 = current_process
-    ->p_time + elapsedTime;
+    state->reg_a0 = current_process->p_time + elapsedTime;
 }
 
 void waitForClock(state_t *state){
-    semaphoreP(&pseudoclock_semaphore);
+    semaphoreP(&device_semaphores[PSEUDOCLOCK_INDEX]);
 }
 
 void getSupportData(state_t *state){
@@ -255,10 +309,14 @@ void yield(state_t *state){
 }
 
 void passUpOrDie(int index) {
+    klog_print("PassUPorDie opeartion started");
     if (current_process->p_supportStruct == NULL) {
         processKiller(current_process);
+        current_process = NULL;
+        klog_print("KILLATO PROCESSO CORRENTE PER MANCANZA SUPPORT STRUCT");
         scheduler();
     } else {
+        klog_print("PassUPorDie operation continuing");
         support_t *sup = current_process->p_supportStruct;
         state_t *savedState = GET_EXCEPTION_STATE_PTR(0);
         sup->sup_exceptState[index] = *savedState;
@@ -266,6 +324,7 @@ void passUpOrDie(int index) {
             sup->sup_exceptContext[index].status, 
             sup->sup_exceptContext[index].pc);
     }
+    return;
 }
 
 void tlbHandler(){
@@ -273,10 +332,17 @@ void tlbHandler(){
 }
 
 void programTrapHandler(){
+    klog_print("program trap handling started\n");
+    klog_print_dec(current_process != NULL ? 1 : 0);
     passUpOrDie(GENERALEXCEPT);
+    return;
 }
 
 void syscallHandler(state_t *state){
+    klog_print("SYS a0:");
+    klog_print_dec(-(state->reg_a0)); 
+    klog_print("MPP check:");
+    klog_print_dec((state->status & 0x1800) == 0 ? 1 : 0);
     int a0 = state->reg_a0;
     if(a0 > 0){
         passUpOrDie(GENERALEXCEPT);
@@ -285,7 +351,7 @@ void syscallHandler(state_t *state){
     else if(a0 < 0){
         // Check if in user mode
         if((state->status & MSTATUS_MPP_MASK) == 0){  // user mode
-            state->cause = (state->cause & CLEAREXECCODE) | (PRIVINSTR << CAUSESHIFT);
+            state->cause = state->cause & CLEAREXECCODE;
             programTrapHandler();
             return;
         }
@@ -308,12 +374,15 @@ void syscallHandler(state_t *state){
                     break;
                 case VERHOGEN:
                     verhogen(state);
+                    klog_print("V operation completed\n");
                     state->pc_epc = state->pc_epc + 4;
                     LDST(state);
-                    break;
+                    return;
                 case DOIO:
                     state->pc_epc = state->pc_epc + 4;
                     current_process->p_s = *state; // Salva lo stato prima di fare l'I/O
+                    klog_print("DOIO saving status:");
+                    klog_print_hex(current_process->p_s.status);
                     updateCPUtime();
                     doIO(state);
                     break;
@@ -356,25 +425,44 @@ void syscallHandler(state_t *state){
         state->cause = (state->cause & CLEAREXECCODE) | (PRIVINSTR << CAUSESHIFT);
         programTrapHandler();
     }
+    return;
 }
 
 void exceptionHandler(){
+    
+
     state_t *savedState = GET_EXCEPTION_STATE_PTR(0);
     unsigned int cause = getCAUSE();
-    unsigned int excCode = (cause & GETEXECCODE) >> CAUSESHIFT;
-    if(CAUSE_IP_GET(cause, IL_CPUTIMER) || CAUSE_IP_GET(cause, IL_TIMER) || CAUSE_IP_GET(cause, IL_DISK) || 
-       CAUSE_IP_GET(cause, IL_FLASH) || CAUSE_IP_GET(cause, IL_ETHERNET) || CAUSE_IP_GET(cause, IL_PRINTER) || 
-       CAUSE_IP_GET(cause, IL_TERMINAL)){  
+    
+    
+    //testing
+    
+    klog_print("status:");
+    klog_print_hex(savedState->status);
+    klog_print("raw cause:");
+    klog_print_hex(getCAUSE());
+    
+
+    if(cause & 0x80000000){  
         interruptHandler();
+        return;
     }
-    else if(excCode >= 24 && excCode <= 28){ 
+    unsigned int excCode = cause & 0xFF;
+    klog_print("exc:");
+    klog_print_dec(excCode);
+    if(excCode >= 24 && excCode <= 28){ 
         tlbHandler();
+        return;
     }
     else if(excCode == 8 || excCode == 11){ 
         syscallHandler(savedState);
+        return;
     }
     else if((excCode >= 0 && excCode <=7)||excCode == 9 || excCode == 10 || (excCode >= 12 && excCode <=23)){  
+        klog_print("STARTING PROGRAM TRAP HANDLER\n");
         programTrapHandler();
+        return;
     }
     else programTrapHandler(); // per eccezioni non previste, le tratto come program trap
+    return;
 }   

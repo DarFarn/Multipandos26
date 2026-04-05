@@ -15,10 +15,9 @@ extern void scheduler();
 //External Nucleus global variables
 extern int processCount;
 extern int softblockcount;
-extern LIST_HEAD(readyQueue);
+extern struct list_head readyQueue;
 extern pcb_t *current_process;
-extern int pseudoClockSemaphore; //Dovrebbe essere in initialize.c
-extern int device_semaphores[NRSEMAPHORES];
+extern int device_semaphores[];
 extern cpu_t processStartTime;
 
 //Device register base addresses
@@ -99,12 +98,12 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
     
     /* For terminal devices, check transmitter priority */
     if (isTerminal) {
-        unsigned int termBase = TERM_REG_BASE + (devNo * DEV_REG_SIZE);
+        unsigned int termBase = TERM_REG_BASE + (devNo * 0x10); // prima c'era DEV_REG_SIZE
         unsigned int *transmStatus = (unsigned int *)(termBase + TRANSM_STATUS_OFFSET);
         unsigned int *recvStatus = (unsigned int *)(termBase + RECV_STATUS_OFFSET);
         
         /* Transmitter has higher priority than receiver */
-        if ((*transmStatus & STATUSMASK) != 0) {
+        if ((*transmStatus & STATUSMASK) != 1) { // pprima era 0
             isTransmitter = 1;
             statusReg = (unsigned int *)(termBase + TRANSM_STATUS_OFFSET);
             commandReg = (unsigned int *)(termBase + TRANSM_COMMAND_OFFSET);
@@ -128,12 +127,12 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
     
     // Operazione V sul device semaphore
     semIndex = getSemaphoreIndex(intLineNo, devNo, isTransmitter);
-    unblockedProc = removeBlocked(device_semaphores[semIndex]);
+    unblockedProc = removeBlocked(&device_semaphores[semIndex]);
     
     //Sbloccare un processo se ce ne sono di bloccati
     if (unblockedProc != NULL) {
         // Inseriemnto status code nel registro a0 del PCB appena sbloccato
-        unblockedProc->p_s.regs[REG_A0] = statusCode;
+        unblockedProc->p_s.reg_a0 = statusCode;
         unblockedProc->p_semAdd = NULL; //Processo non più bloccato 
         softblockcount--;
         
@@ -163,7 +162,7 @@ void handlePLTInterrupt() {
     //Aggiornemento dell'accumulated CPU time
     cpu_t currentTime;
     STCK(currentTime);
-    currentProcess->p_time += (currentTime - processStartTime); 
+    current_process->p_time += (currentTime - processStartTime); 
     
     //Inserimento Current Process nella ReadyQueue
     insertProcQ(&readyQueue, current_process);
@@ -182,8 +181,8 @@ void handleIntervalTimerInterrupt() {
     //Ublocking PCB waiting for Pseudo-clock tick 
     pcb_t *unblockedProc;
     
-    while ((unblockedProc = removeBlocked(&pseudoClockSemaphore)) != NULL) {
-        unblockedProc->p_s.regs[REG_A0] = 0;  //status code
+    while ((unblockedProc = removeBlocked(&device_semaphores[PSEUDOCLOCK_INDEX])) != NULL) {
+        unblockedProc->p_s.reg_a0 = 0;  //status code
         unblockedProc->p_semAdd = NULL;
         softblockcount--;
         insertProcQ(&readyQueue, unblockedProc);
@@ -201,16 +200,17 @@ void handleIntervalTimerInterrupt() {
 
 //Non ho ben capito, chat
 //Find highest priority pending interrupt 
-int findHighestPriorityInterrupt(unsigned int *bitMap) {
+
+/*int findHighestPriorityInterrupt(unsigned int *bitMap) {
     unsigned int cause = getCAUSE();
     int intLineNo = 0;
     
     /* Extract exception code using GETEXECCODE (0x7C = bits 2-6) */
     /* CAUSE_EXCCODE_MASK is not defined in your const.h, so use GETEXECCODE */
-    unsigned int excCode = cause & GETEXECCODE;
+    //unsigned int excCode = cause & GETEXECCODE;
     
     // Interrupt Line map Tabella 1
-    switch (excCode) {
+    /*switch (excCode) {
         case 7:  intLineNo = 1; break;  
         case 3:  intLineNo = 2; break;  
         case 17: intLineNo = 3; break;  
@@ -220,21 +220,48 @@ int findHighestPriorityInterrupt(unsigned int *bitMap) {
         case 21: intLineNo = 7; break;  
         default: return 0;  //Sconosciuto
     }
+        */
     
     /* For device interrupts (lines 3-7), read the Interrupting Devices Bit Map */
-    if (intLineNo >= 3) {
+    //if (intLineNo >= 3) {
         /* Bit Map starts at 0x10000040, each line is 4 bytes */
-                unsigned int *bitMapAddr = (unsigned int *)(INTERRUPT_BIT_MAP + ((intLineNo - 3) * 4));
-        *bitMap = *bitMapAddr;
+    //            unsigned int *bitMapAddr = (unsigned int *)(INTERRUPT_BIT_MAP + ((intLineNo - 3) * 4));
+    //    *bitMap = *bitMapAddr;
         
         /* Spurious interrupt: line indicated but no device bit set */
-        if (*bitMap == 0) {
-            return 0;
-        }
-    }
+    //    if (*bitMap == 0) {
+    //        return 0;
+    //    }
+//    }
     
+ //   return intLineNo;
+//}
+
+//altro crazy talk
+int findHighestPriorityInterrupt(unsigned int *bitMap) {
+    unsigned int cause = getCAUSE();
+    int intLineNo = 0;
+
+    // Check in priority order: lowest line number = highest priority
+    if (CAUSE_IP_GET(cause, IL_CPUTIMER))       intLineNo = 1;
+    else if (CAUSE_IP_GET(cause, IL_TIMER))     intLineNo = 2;
+    else if (CAUSE_IP_GET(cause, IL_DISK))      intLineNo = 3;
+    else if (CAUSE_IP_GET(cause, IL_FLASH))     intLineNo = 4;
+    else if (CAUSE_IP_GET(cause, IL_ETHERNET))  intLineNo = 5;
+    else if (CAUSE_IP_GET(cause, IL_PRINTER))   intLineNo = 6;
+    else if (CAUSE_IP_GET(cause, IL_TERMINAL))  intLineNo = 7;
+    else return 0;
+
+    if (intLineNo >= 3) {
+        unsigned int *bitMapAddr = (unsigned int *)(INTERRUPT_BIT_MAP + ((intLineNo - 3) * 4));
+        *bitMap = *bitMapAddr;
+        if (*bitMap == 0) return 0;
+    }
+
     return intLineNo;
 }
+
+
 
 //Main Interrupt Exception Handler
 //Chimato da exceptionHandler quando CAUSE_IS_INT è true

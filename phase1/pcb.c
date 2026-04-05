@@ -3,6 +3,7 @@
 static struct list_head pcbFree_h;
 static pcb_t pcbFree_table[MAXPROC];
 static int next_pid = 1;
+static const pcb_t null_pcb={0};
 
 void initPcbs() {
     INIT_LIST_HEAD(&pcbFree_h); //inizializza la lista pcbFree_h come vuota

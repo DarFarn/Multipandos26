@@ -18,7 +18,6 @@
 #include "../headers/const.h"
 #include "../headers/types.h"
 #include <uriscv/liburiscv.h>
-#include "../headers/klog.h"
 
 typedef unsigned int devregtr;
 
@@ -84,7 +83,7 @@ int sem_term_mut = 1,              /* for mutual exclusion on terminal */
     sem_blkp9               = 0;   /* to block p9 */
 
 state_t p2state, p3state, p4state, p5state, p6state, p7state, p8rootstate, child1state, child2state, gchild1state,
-gchild2state, gchild3state, gchild4state, p9state, p10state, hp_p1state, hp_p2state;
+    gchild2state, gchild3state, gchild4state, p9state, p10state, hp_p1state, hp_p2state;
 
 int p2pid, p3pid, p4pid, p8pid, p9pid;
 
@@ -110,16 +109,16 @@ extern void p5mm();
 
 /* a procedure to print on terminal 0 */
 void print(char *msg) {
-    
+
     char     *s       = msg;
     devregtr *base    = (devregtr *)(TERM0ADDR);
     devregtr *command = base + 3;
     devregtr  status;
-    
+
     SYSCALL(PASSEREN, (int)&sem_term_mut, 0, 0); /* P(sem_term_mut) */
     while (*s != EOS) {
         devregtr value = PRINTCHR | (((devregtr)*s) << 8);
-        status         = SYSCALL(DOIO, (int)command, (int)value, 0);
+        status = SYSCALL(DOIO, (int)command, (int)value, 0);
         if ((status & TERMSTATMASK) != RECVD) {
             PANIC();
         }
@@ -144,7 +143,6 @@ void uTLB_RefillHandler() {
 /*                 p1 -- the root process                            */
 /*                                                                   */
 void test() {
-    klog_print("test");
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0); /* V(sem_testsem)   */
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0);
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0);

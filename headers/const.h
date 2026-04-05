@@ -11,6 +11,7 @@
 
 #define PROCESS_PRIO_LOW  0
 #define PROCESS_PRIO_HIGH 1
+#define PSEUDOCLOCK_INDEX (NRSEMAPHORES - 1)
 
 /* Number of semaphore's device */
 #define SEMDEVLEN 49

@@ -89,6 +89,7 @@ struct list_head {
 
     return: void
 */
+// Crea il nodo sentinella, con next e prev che putano a se stessi
 static inline void INIT_LIST_HEAD(struct list_head *list) {
     list->next = list;
     list->prev = list;
