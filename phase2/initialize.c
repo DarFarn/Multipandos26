@@ -12,27 +12,32 @@
 
 
 extern void test();
-void print(char *msg);
 extern void uTLB_RefillHandler();
 extern void exceptionHandler(); // penso vada bene (alice)
 extern void scheduler();
 
 int processCount;   // numero di processi iniziati ma non terminati
 int softblockcount; // numero di processi bloccati
-LIST_HEAD(readyQueue);
+struct list_head readyQueue;
 pcb_t *current_process;                 // puntatore al processo corrente
-int device_semaphores[NRSEMAPHORES]; // occhiooooo?????????
+int device_semaphores[NRSEMAPHORES]; 
+cpu_t startTOD;
+pcb_t *activeProcs[MAXPROC]; // array che contiene i puntatori a tutti i processi attivi, da 0 a MAXPROC-1, se un indice è null allora il processo è terminato
 
-int main()
+
+int main(void)
 {
+
+    memaddr position;
+    RAMTOP(position);
     
     passupvector_t *passupvector = (passupvector_t *)PASSUPVECTOR;
 
     passupvector->tlb_refill_handler = (memaddr)uTLB_RefillHandler;
-    passupvector->tlb_refill_stackPtr = (memaddr)KERNELSTACK;
+    passupvector->tlb_refill_stackPtr = position;
     passupvector->exception_handler = (memaddr)exceptionHandler;
 
-    passupvector->exception_stackPtr = (memaddr)KERNELSTACK;
+    passupvector->exception_stackPtr = position - PAGESIZE; // da ricontrollare se va bene, non vorrei sovrascrivere roba importante
 
     initPcbs();
     initASL();
@@ -45,9 +50,11 @@ int main()
     {
         device_semaphores[i] = 0; // semafori inizializzati a 0 OCCHIO!!!!!!
     }
-
-    volatile unsigned int *interval_timer = (volatile unsigned int *)INTERVALTMR;
-    *interval_timer = PSECOND;
+    STCK(startTOD);
+    for (int i = 0; i < MAXPROC; i++) {
+        activeProcs[i] = NULL; // inizializzo l'array dei processi attivi a null
+    }
+    LDIT(PSECOND);
     pcb_t *p = allocPcb(); // allochiamo il primo pcb
 
     /// setto i parametri di p a null
@@ -60,14 +67,16 @@ int main()
     p->p_supportStruct = NULL;
 
     p->p_s.pc_epc = (memaddr)test;                     // PC
-    p->p_s.status = MSTATUS_MPIE_MASK | MSTATUS_MPP_M; // kernel mode + interrupt
+    p->p_s.status = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M; // kernel mode + interrupt
     p->p_s.mie = MIE_ALL;                              // abilita interrupt
-    RAMTOP(p->p_s.reg_sp);                 // in teoria stack pointer caricato in ramtop
+    p->p_s.reg_sp = position - (2 * PAGESIZE);              // in teoria stack pointer caricato in ramtop
     insertProcQ(&readyQueue, p);                       // mettoin ready queue
-    processCount++;  
+    processCount = 1;  
     
     //testing
-    p->p_s.status = MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
+    p->p_s.status = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
+    activeProcs[0] = p; // inserisco il processo appena creato nell'array dei processi attivi
+
 
     klog_print("MPP_M:");
     klog_print_hex(MSTATUS_MPP_M);
