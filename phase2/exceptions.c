@@ -8,6 +8,7 @@
 #include <uriscv/const.h>
 #include "../phase2/headers/scheduler.h"
 #include "../phase2/headers/initialize.h"
+#include "../phase2/headers/interrupts.h"
 #include "../headers/klog.h"
 
 extern int processCount;
@@ -16,6 +17,8 @@ extern struct list_head readyQueue;
 extern pcb_t *current_process;
 extern cpu_t processStartTime; // i need that, deve essere fatto dallo scheduler
 extern int device_semaphores[];
+extern pcb_t *activeProcs[MAXPROC]; // array che contiene i puntatori a tutti i processi attivi, da 0 a MAXPROC-1, se un indice è null allora il processo è terminato
+extern cpu_t startTOD;
 
 
 extern void scheduler();
@@ -28,6 +31,13 @@ extern void interruptHandler();
 //    LDST((state_t*) BIOSDATAPAGE);
 //}
 
+static void copyState(state_t *dst, state_t *src) {
+    unsigned int *d = (unsigned int *) dst;
+    unsigned int *s = (unsigned int *) src;
+    for (int i = 0; i < STATE_T_SIZE_IN_BYTES / WORDLEN; i++)
+        d[i] = s[i];
+}
+
 
 void *memcpy(void *dest, const void *src, unsigned int n) { //BOOOOOHH
     char *d = dest;
@@ -39,18 +49,21 @@ void *memcpy(void *dest, const void *src, unsigned int n) { //BOOOOOHH
 void updateCPUtime(){
     cpu_t now;
     STCK(now); 
-    current_process->p_time = current_process->p_time + (now - processStartTime);
-    processStartTime = now; //PROBLEMA 1
+    current_process->p_time = current_process->p_time + (now - startTOD);
+    startTOD = now; //PROBLEMA 1
 }
 
 void createProcess(state_t *state){
     klog_print("STO PER CRAFTARE UN PROCESSO\n");
     pcb_t *newProcess = allocPcb();
+    state_t *newState = (state_t *) state->reg_a1; // reg_a1 contiene il puntatore allo stato del nuovo processo
     if (newProcess == NULL){
         state->reg_a0 = -1;
+        copyState(&current_process->p_s, state);
+        LDST(&current_process->p_s);
         return;
     }
-    newProcess->p_s = *((state_t *) state->reg_a1);
+    copyState(&newProcess->p_s, newState);
     if(state->reg_a2){
         newProcess->p_prio = state->reg_a2;  
     }
@@ -85,6 +98,9 @@ void processKiller(pcb_t* p){
             softblockcount--;
         }
         p->p_semAdd = NULL;
+    }
+    else if (p != current_process){
+        outProcQ(&readyQueue, p);
     }
     freePcb(p);
     processCount--;
@@ -121,6 +137,7 @@ void terminateProcess(state_t *state){
     else{
         pcb_t* toKill = findProcess(state->reg_a1);
         if(toKill == NULL){
+            scheduler();
             return;
         }
         if(toKill == current_process){
@@ -134,23 +151,45 @@ void terminateProcess(state_t *state){
 
 void passeren(state_t* state){
     klog_print("STARTANDO LA P OPERATION\n");
-    int *semAdd = (int *)state->reg_a1; // intero o puntatore ad un'intero??????
+    int *semAdd = (int *)state->reg_a1;
+    if (semAdd == NULL) {
+        klog_print("P addr NULL\n");
+        return;
+    }
+    klog_print("P addr:");
+    klog_print_hex((unsigned int)semAdd);
     (*semAdd)--;
-    if(*semAdd < 0){
+    klog_print("sem val:");
+    klog_print_dec(*semAdd);
+    if (*semAdd < 0) {
+        klog_print("P operation blocking process\n");
+        klog_print("Passeren saving status:");
+        klog_print_hex(state->status);
+        klog_print("Passeren pC:");
+        klog_print_hex(state->pc_epc);
+        current_process->p_s = *state;
         current_process->p_semAdd = semAdd;
-        insertBlocked(semAdd, current_process);
+        if (insertBlocked(semAdd, current_process) != 0) {
+            PANIC();
+        }
+        current_process = NULL;
         scheduler();
     }
-    return;    
+    klog_print("P returning");
+    return;
 }
 
 void verhogen(state_t* state){
     klog_print("starting V operation\n");
     int *semAdd = (int *)state->reg_a1; 
+    klog_print("V addr:");
+    klog_print_hex((unsigned int)semAdd);
     (*semAdd)++;
     if(*semAdd <= 0){
         pcb_t* toFree = removeBlocked(semAdd);
         if(toFree != NULL){
+            klog_print("VERHOGEN unblocked pcb p_s.status:");
+            klog_print_hex(toFree->p_s.status);   // ← add this
             toFree->p_semAdd = NULL;
             insertProcQ(&readyQueue, toFree);
         }
@@ -221,33 +260,62 @@ void doIO(state_t *state){ //???????????????????fatta con chat??????????????????
     */
 
 void doIO(state_t *state) {
+
     klog_print("STARTANDO LA DOIO OPERATION\n");
+
     memaddr commandAddr = (memaddr) state->reg_a1;
     int commandValue    = (int) state->reg_a2;
 
-    // Figure out which line and device this address belongs to
-    int offset    = commandAddr - START_DEVREG;   // offset from 0x10000054
-    int lineIndex = offset / 0x80;                // which interrupt line (0-4)
+    klog_print("commandAddr:");
+    klog_print_hex(commandAddr);
+    klog_print("START_DEVREG:");
+    klog_print_hex(START_DEVREG);
+    klog_print("offset:");
+    klog_print_hex(commandAddr - START_DEVREG);
+    klog_print("limit:");
+    klog_print_hex(5 * 0x80);
+
+    if (commandAddr < START_DEVREG) {
+        klog_print("INVALID DEVICE ADDRESS because it's below the start address\n");
+        state->reg_a0 = -1;
+        return;
+    }
+
+    unsigned int offset = commandAddr - START_DEVREG;
+    if (offset >= 5 * 0x80) {
+        klog_print("INVALID DEVICE ADDRESS because it's beyond the valid range\n");
+        state->reg_a0 = -1;
+        return;
+    }
+
+    int lineIndex = offset / 0x80;                // which interrupt line region (0-4)
     int devNo     = (offset % 0x80) / 0x10;       // which device (0-7)
     int line      = lineIndex + 3;                // actual line number (3-7)
 
     int semIndex;
     if (line >= 3 && line <= 6) {
-        semIndex = lineIndex * DEVPERINT + devNo;
-    } else if (line == 7) {
-        // Terminal: figure out recv vs transmit from the field offset within device
+        int fieldOffset = offset % 0x10;
+        if (fieldOffset != 4) {
+            klog_print("INVALID NON-TERMINAL COMMAND ADDRESS\n");
+            state->reg_a0 = -1;
+            return;
+        }
+        semIndex = getSemaphoreIndex(line, devNo, 0);
+    } else {
         memaddr termBase  = START_DEVREG + lineIndex * 0x80 + devNo * 0x10;
         int fieldOffset   = commandAddr - termBase;
-        // RECV_COMMAND is at offset 4 (field 1), TRANSM_COMMAND is at offset 12 (field 3)
         if (fieldOffset == 4) {
-            semIndex = (DEVINTNUM - 1) * DEVPERINT + devNo * 2;     // recv
+            semIndex = getSemaphoreIndex(line, devNo, 0);     // recv
+        } else if (fieldOffset == 12) {
+            semIndex = getSemaphoreIndex(line, devNo, 1); // transmit
         } else {
-            semIndex = (DEVINTNUM - 1) * DEVPERINT + devNo * 2 + 1; // transmit
+            klog_print("INVALID TERMINAL COMMAND ADDRESS\n");
+            state->reg_a0 = -1;
+            return;
         }
-    } else {
-        state->reg_a0 = -1;
-        return;
     }
+    current_process->p_s = *state;
+
     klog_print("doIO addr:");
     klog_print_hex(commandAddr);
     klog_print("semIdx:");
@@ -256,9 +324,15 @@ void doIO(state_t *state) {
     // Write command to device register
     *(int *)commandAddr = commandValue;
 
-    // Block on the device semaphore
-    semaphoreP(&device_semaphores[semIndex]);
-    // status will be placed in a0 by the interrupt handler when unblocked
+    int *sem = &device_semaphores[semIndex];
+    (*sem)--;
+    current_process->p_semAdd = sem;
+    if (insertBlocked(sem, current_process) != 0) {
+        PANIC();
+    }
+    softblockcount++;
+    current_process = NULL;
+    scheduler();
 }
 
 void getCPUtime(state_t *state){
@@ -275,7 +349,15 @@ void getCPUtime(state_t *state){
 }
 
 void waitForClock(state_t *state){
-    semaphoreP(&device_semaphores[PSEUDOCLOCK_INDEX]);
+     int *sem = &device_semaphores[PSEUDOCLOCK_INDEX];
+    (*sem)--;
+    current_process->p_semAdd = sem;
+    if (insertBlocked(sem, current_process) != 0) {
+        PANIC();
+    }
+    softblockcount++;
+    current_process = NULL;
+    scheduler();
 }
 
 void getSupportData(state_t *state){
@@ -305,6 +387,7 @@ void yield(state_t *state){
     current_process->p_s = *state;
     updateCPUtime();
     list_add_tail(&(current_process->p_list), &readyQueue); // not sure se vada bene mettere current_process->p_lst così
+    current_process = NULL;
     scheduler();
 }
 
@@ -339,6 +422,7 @@ void programTrapHandler(){
 }
 
 void syscallHandler(state_t *state){
+
     klog_print("SYS a0:");
     klog_print_dec(-(state->reg_a0)); 
     klog_print("MPP check:");
@@ -350,7 +434,7 @@ void syscallHandler(state_t *state){
     }
     else if(a0 < 0){
         // Check if in user mode
-        if((state->status & MSTATUS_MPP_MASK) == 0){  // user mode
+        if((current_process->p_s.status & MSTATUS_MPP_MASK) == 0){  // invece che con state->status??? // user mode
             state->cause = state->cause & CLEAREXECCODE;
             programTrapHandler();
             return;
@@ -361,57 +445,59 @@ void syscallHandler(state_t *state){
                     createProcess(state);
                     state->pc_epc = state->pc_epc + 4;
                     LDST(state);
-                    break;
+                    return;
                 case TERMPROCESS:
                     terminateProcess(state);  
-                    break;
+                    return;
                 case PASSEREN:
                     state->pc_epc = state->pc_epc + 4;
-                    current_process->p_s = *state; // Salva lo stato prima di fare la P
                     updateCPUtime();
                     passeren(state);
-                    LDST(state); // se il processo non viene bloccato riprende da qui
-                    break;
+                    klog_print("P operation completed\n");
+                    LDST(state);
+                    return;
                 case VERHOGEN:
                     verhogen(state);
                     klog_print("V operation completed\n");
                     state->pc_epc = state->pc_epc + 4;
+                    klog_print("Verhogen about to return state:");
+                    klog_print_hex(state->status);
                     LDST(state);
                     return;
                 case DOIO:
                     state->pc_epc = state->pc_epc + 4;
-                    current_process->p_s = *state; // Salva lo stato prima di fare l'I/O
                     klog_print("DOIO saving status:");
                     klog_print_hex(current_process->p_s.status);
                     updateCPUtime();
                     doIO(state);
-                    break;
+                
+                    klog_print("DOIO operation completed\n");
+                    return;
                 case GETTIME:
                     getCPUtime(state);
                     state->pc_epc = state->pc_epc + 4;
                     LDST(state);
-                    break;
+                    return;
                 case CLOCKWAIT:
                     state->pc_epc = state->pc_epc + 4;
-                    current_process->p_s = *state; // Salva lo stato prima di aspettare il clock
                     updateCPUtime();
+                    current_process->p_s = *state;
                     waitForClock(state);
-                    break;
+                    return;
                 case GETSUPPORTPTR:
                     getSupportData(state);
                     state->pc_epc = state->pc_epc + 4;
                     LDST(state);
-                    break;
+                    return;
                 case GETPROCESSID:
                     getProcessID(state);
                     state->pc_epc = state->pc_epc + 4;
                     LDST(state);
-                    break;
+                    return;
                 case YIELD:
                     state->pc_epc = state->pc_epc + 4;
-                    updateCPUtime();
                     yield(state);
-                    break;
+                    return;
                 default:
                     // servizio inesistente
                     state->cause = (state->cause & CLEAREXECCODE) | (PRIVINSTR << CAUSESHIFT);
@@ -429,10 +515,13 @@ void syscallHandler(state_t *state){
 }
 
 void exceptionHandler(){
-    
-
-    state_t *savedState = GET_EXCEPTION_STATE_PTR(0);
-    unsigned int cause = getCAUSE();
+    state_t *savedState = (state_t *) BIOSDATAPAGE; // dove il processore salva lo stato in caso di eccezione
+    savedState->mie = MIE_ALL; // FOOOOORSE
+    klog_print("EXC entry status:");
+    klog_print_hex(savedState->status);    
+    klog_print("EXC entry cause:");
+    klog_print_hex(savedState->cause);
+    unsigned int cause = savedState->cause;
     
     
     //testing
@@ -447,7 +536,7 @@ void exceptionHandler(){
         interruptHandler();
         return;
     }
-    unsigned int excCode = cause & 0xFF;
+    unsigned int excCode = cause & 0xFFu;
     klog_print("exc:");
     klog_print_dec(excCode);
     if(excCode >= 24 && excCode <= 28){ 
