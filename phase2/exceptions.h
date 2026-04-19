@@ -1,5 +1,5 @@
 /// @brief aggiorna il tempo di CPU usato dal processo corrente
-void updateCPUTime(); // !!! startTime va aggiornato dallo schedule quando disptcha un processo
+void updateCPUtime(); // !!! startTime va aggiornato dallo schedule quando disptcha un processo
 
 /// @brief NSYS1
 /// @param state stato del processo nel momento dell'eccezione
