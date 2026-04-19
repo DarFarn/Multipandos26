@@ -30,14 +30,18 @@ int main(void)
 
     memaddr position;
     RAMTOP(position);
+    klog_print("ramtop:");
+    klog_print_hex(position);
+
+
     
     passupvector_t *passupvector = (passupvector_t *)PASSUPVECTOR;
 
     passupvector->tlb_refill_handler = (memaddr)uTLB_RefillHandler;
-    passupvector->tlb_refill_stackPtr = position;
+    passupvector->tlb_refill_stackPtr = KERNELSTACK + 0x4;
     passupvector->exception_handler = (memaddr)exceptionHandler;
 
-    passupvector->exception_stackPtr = position - PAGESIZE; // da ricontrollare se va bene, non vorrei sovrascrivere roba importante
+    passupvector->exception_stackPtr = KERNELSTACK; // da ricontrollare se va bene, non vorrei sovrascrivere roba importante
 
     initPcbs();
     initASL();
@@ -46,7 +50,7 @@ int main(void)
     mkEmptyProcQ(&readyQueue);
     current_process = NULL;
 
-    for (int i = 0; i < NRSEMAPHORES; i++)
+    for (int i = 0; i <= PSEUDOCLOCK_INDEX; i++)
     {
         device_semaphores[i] = 0; // semafori inizializzati a 0 OCCHIO!!!!!!
     }
@@ -69,7 +73,7 @@ int main(void)
     p->p_s.pc_epc = (memaddr)test;                     // PC
     p->p_s.status = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M; // kernel mode + interrupt
     p->p_s.mie = MIE_ALL;                              // abilita interrupt
-    p->p_s.reg_sp = position - (2 * PAGESIZE);              // in teoria stack pointer caricato in ramtop
+    p->p_s.reg_sp = position - (10 * PAGESIZE);              // in teoria stack pointer caricato in ramtop
     insertProcQ(&readyQueue, p);                       // mettoin ready queue
     processCount = 1;  
     
