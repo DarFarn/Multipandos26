@@ -9,8 +9,10 @@
 #include "../headers/klog.h"
 #include "../phase2/headers/scheduler.h"
 #include "../phase2/headers/initialize.h"
+#include "../phase2/headers/exceptions.h"
 
 extern void scheduler();
+extern void updateCPUtime();
 
 //External Nucleus global variables
 extern int processCount;
@@ -19,6 +21,7 @@ extern struct list_head readyQueue;
 extern pcb_t *current_process;
 extern int device_semaphores[];
 extern cpu_t processStartTime;
+extern cpu_t startTOD;
 
 //Device register base addresses
 #define INTERRUPT_BIT_MAP 0x10000040 
@@ -50,19 +53,18 @@ extern cpu_t processStartTime;
 
 
 //Calcolo dell'inidirizzo del device’s device register
-unsigned int getDeviceRegAddr(int intLineNo, int devNo) {
-    return DEVICE_REG_BASE + ((intLineNo - 3) * DEV_REG_SIZE) + (devNo * 0x10);
+unsigned int* getDeviceRegAddr(int intLineNo, int devNo) {
+    return ((unsigned int *) (DEVICE_REG_BASE + ((intLineNo) - 3) * DEV_REG_SIZE + (devNo) * 0x10));
 }
 
 //Funzione che trova il device con proprità più alta. Ritorna -1 se non c'è
 int getHighestPriorityDevice(unsigned int bitMap) {
-    int devNo;
-    for (devNo = 0; devNo < DEVICES_PER_LINE; devNo++) {
-        if (bitMap & (1 << devNo)) {
-            return devNo;
-        }
-    }
-    return -1;
+   for(int i = 0; i < 5; i++) {
+       if(bitMap & (1u << i)) {
+           return i;
+       }
+   }
+   return -1; // No interrupt pending
 }
 
 //Semaphore index per un device
@@ -70,17 +72,23 @@ int getHighestPriorityDevice(unsigned int bitMap) {
 //Ogni Terminal Device ha 2 semafori --> a 8 terminal corrispondono 16 semafori (32-47)
 int getSemaphoreIndex(int intLineNo, int devNo, int isTransmitter) {
     if (intLineNo == 7) {
-        return 32 + (devNo * 2) + (isTransmitter ? 1 : 0);
+        return isTransmitter ? (32 + devNo) : (40 + devNo);
     } else {
         int lineOffset = intLineNo - 3; //Linee 3-6
         return (lineOffset * DEVICES_PER_LINE) + devNo;
     }
 }
 
-
+/*
 //Parte 7.1 Non-Timer Interrupts
 void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
-    int devNo;
+    klog_print("Handling non-timer interrupt on line:");
+    klog_print_dec(intLineNo);
+    klog_print(" with bitMap:");
+    klog_print_hex(bitMap);
+    int devNo = getHighestPriorityDevice(bitMap);
+    klog_print("Device number with highest priority interrupt:");
+    klog_print_dec(devNo);
     unsigned int devRegAddr;
     unsigned int *statusReg;
     unsigned int *commandReg;
@@ -91,85 +99,221 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
     int isTransmitter = 0;
     
     //Trovare il device con priorità maggiore
-    devNo = getHighestPriorityDevice(bitMap);
-    if (devNo < 0) {
+    
+    if (devNo < 0) { // succede questo man non dovrebbe
+        // vuol dire che devno è calcolato male
+        klog_print("nessun dispositivo trovato con bitMap:");
+        if(current_process != NULL) {
+            state_t *exceptionState = (state_t *)BIOSDATAPAGE;
+            LDST(exceptionState);
+        } else {
+            scheduler();
+        }
         return;  //Non è stato trovato nessun dispositivo
     }
-    
-    /* For terminal devices, check transmitter priority */
     if (isTerminal) {
-        unsigned int termBase = TERM_REG_BASE + (devNo * 0x10); // prima c'era DEV_REG_SIZE
-        unsigned int *transmStatus = (unsigned int *)(termBase + TRANSM_STATUS_OFFSET);
-        unsigned int *recvStatus = (unsigned int *)(termBase + RECV_STATUS_OFFSET);
-        
-        /* Transmitter has higher priority than receiver */
-        if ((*transmStatus & STATUSMASK) != 1) { // pprima era 0
+        unsigned int *termBase = getDeviceRegAddr(intLineNo, devNo);
+        unsigned int *transmStatus = (unsigned int *)(termBase + TRANSTATUS); // DAC CONTROLLARE 
+        unsigned int *recvStatus   = (unsigned int *)(termBase + RECVSTATUS); //DA CONTROLLARE
+        // transmission ha priorità su reception
+        if ((*transmStatus & STATUSMASK) != READY && (*transmStatus & STATUSMASK) != BUSY) {
+            klog_print("Terminal transmitter interrupt detected\n");
+            statusReg  = (unsigned int *)(termBase + TRANSM_STATUS_OFFSET);
+            unsigned int savedStatus = *statusReg;  // spurious terminal interrupt, nothing pending
             isTransmitter = 1;
-            statusReg = (unsigned int *)(termBase + TRANSM_STATUS_OFFSET);
             commandReg = (unsigned int *)(termBase + TRANSM_COMMAND_OFFSET);
-        } else {
-            isTransmitter = 0;
-            statusReg = (unsigned int *)(termBase + RECV_STATUS_OFFSET);
-            commandReg = (unsigned int *)(termBase + RECV_COMMAND_OFFSET);
+            *commandReg = ACK;
+            klog_print("Terminal transmitter acknowledged, now checking if any process is waiting on this device\n");
+            semIndex = 32 + devNo; // semaforo del transmitter
+            klog_print("semaforo da cui sbloccare processo:");
+            klog_print_dec(semIndex);
+            klog_print("semaphore value before increment:");
+            klog_print_dec(device_semaphores[semIndex]);
+            if(device_semaphores[semIndex] <= 0){
+                klog_print("Processo/i in attesa sul semaforo del transmitter, sbloccando...\n");
+                device_semaphores[semIndex]++;
+                pcb_t *unblockedProc = removeBlocked(&device_semaphores[semIndex]);
+                klog_print("valore del semaforo dopo incremento:");
+                klog_print_dec(device_semaphores[semIndex]);
+                
+                if (unblockedProc != NULL) {
+                    klog_print("Processo trovato, sbloccando e aggiungendo alla ready queue\n");
+                    unblockedProc->p_s.reg_a0 = savedStatus;  // status code
+                    unblockedProc->p_semAdd = NULL; //Processo non più bloccato 
+                    softblockcount--;
+                    list_add_tail(&unblockedProc->p_list, &readyQueue);
+                    klog_print("Processo unblocked and added to ready queue\n");
+                }
+            }
         }
+        if((*recvStatus & STATUSMASK) != READY && (*recvStatus & STATUSMASK) != BUSY){
+            klog_print("Terminal receiver interrupt detected\n");
+             statusReg  = (unsigned int *)(termBase + RECV_STATUS_OFFSET);
+             unsigned int savedStatus = *statusReg;  // spurious terminal interrupt, nothing pending
+             isTransmitter = 0;
+             commandReg = (unsigned int *)(termBase + RECV_COMMAND_OFFSET);
+             *commandReg = ACK;
+             semIndex = 40 + devNo; // semaforo del receiver
+            if(device_semaphores[semIndex] <= 0){
+                device_semaphores[semIndex]++;
+                pcb_t *unblockedProc = removeBlocked(&device_semaphores[semIndex]);
+                if (unblockedProc != NULL) {
+                    unblockedProc->p_s.reg_a0 = savedStatus;  // status code
+                    unblockedProc->p_semAdd = NULL; //Processo non più bloccato 
+                    softblockcount--;
+                    insertProcQ(&readyQueue, unblockedProc);
+                }
+            }
+        }
+    }    
+    else{
+        klog_print("Non-terminal device interrupt detected\n");
+        unsigned int *devBase = getDeviceRegAddr(intLineNo, devNo);
+        unsigned int savedStatus = *devBase + STATUS_OFFSET;
+        commandReg = (unsigned int *)(devBase + COMMAND_OFFSET);
+        *commandReg = ACK;
+        semIndex = (((intLineNo) -3)* DEVICES_PER_LINE + (devNo));
+        if(device_semaphores[semIndex] <= 0){
+            device_semaphores[semIndex]++;
+            pcb_t *unblockedProc = removeBlocked(&device_semaphores[semIndex]);
+            if (unblockedProc != NULL) {
+                unblockedProc->p_s.reg_a0 = savedStatus;  // status code
+                unblockedProc->p_semAdd = NULL; //Processo non più bloccato 
+                softblockcount--;
+                insertProcQ(&readyQueue, unblockedProc);
+            }
+        }    
+    }
+    return;
+} 
+*/
+
+void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
+    klog_print("Handling non-timer interrupt on line:");
+    klog_print_dec(intLineNo);
+    klog_print(" with bitMap:");
+    klog_print_hex(bitMap);
+
+    int devNo = getHighestPriorityDevice(bitMap);
+    klog_print("Device number with highest priority interrupt:");
+    klog_print_dec(devNo);
+
+    if (devNo < 0) {
+        klog_print("nessun dispositivo trovato\n");
+        if (current_process != NULL) {
+            LDST((state_t *)BIOSDATAPAGE);
+        } else {
+            scheduler();
+        }
+        return;
+    }
+
+    unsigned int *devBase = getDeviceRegAddr(intLineNo, devNo);
+    int semIndex;
+    unsigned int savedStatus;
+
+    if (intLineNo == 7) {
+        // termBase è uint32_t*, quindi +0,+1,+2,+3 sono word indices
+        // +0 = RECV_STATUS, +1 = RECV_CMD, +2 = TRANS_STATUS, +3 = TRANS_CMD
+        unsigned int txStatus = *(devBase + 2);
+        unsigned int rxStatus = *(devBase + 0);
+
+        // TX ha priorità su RX
+        if ((txStatus & STATUSMASK) != READY && (txStatus & STATUSMASK) != BUSY) {
+            klog_print("Terminal transmitter interrupt detected\n");
+            savedStatus = txStatus;
+            *(devBase + 3) = ACK;  // scrivi ACK al TRANSM_COMMAND
+            klog_print("Terminal transmitter ACK written\n");
+
+            semIndex = 32 + devNo;
+            klog_print("semaforo da cui sbloccare processo:");
+            klog_print_dec(semIndex);
+            klog_print("semaphore value before increment:");
+            klog_print_dec(device_semaphores[semIndex]);
+
+            device_semaphores[semIndex]++;
+
+            klog_print("semaphore value after increment:");
+            klog_print_dec(device_semaphores[semIndex]);
+
+            if (device_semaphores[semIndex] <= 0) {
+                pcb_t *unblocked = removeBlocked(&device_semaphores[semIndex]);
+                if (unblocked != NULL) {
+                    klog_print("TX process unblocked\n");
+                    unblocked->p_s.reg_a0 = savedStatus;
+                    unblocked->p_semAdd = NULL;
+                    softblockcount--;
+                    insertProcQ(&readyQueue, unblocked);
+                }
+            }
+        }
+
+        if ((rxStatus & STATUSMASK) != READY && (rxStatus & STATUSMASK) != BUSY) {
+            klog_print("Terminal receiver interrupt detected\n");
+            savedStatus = rxStatus;
+            *(devBase + 1) = ACK;  // scrivi ACK al RECV_COMMAND
+
+            semIndex = 40 + devNo;
+            device_semaphores[semIndex]++;
+
+            if (device_semaphores[semIndex] <= 0) {
+                pcb_t *unblocked = removeBlocked(&device_semaphores[semIndex]);
+                if (unblocked != NULL) {
+                    klog_print("RX process unblocked\n");
+                    unblocked->p_s.reg_a0 = savedStatus;
+                    unblocked->p_semAdd = NULL;
+                    softblockcount--;
+                    insertProcQ(&readyQueue, unblocked);
+                }
+            }
+        }
+
     } else {
-        //Caloclo device register adress
-        devRegAddr = getDeviceRegAddr(intLineNo, devNo);
-        statusReg = (unsigned int *)(devRegAddr + STATUS_OFFSET);
-        commandReg = (unsigned int *)(devRegAddr + COMMAND_OFFSET);
+        // Non-terminal: +0 = STATUS, +1 = COMMAND
+        klog_print("Non-terminal device interrupt detected\n");
+        savedStatus = *(devBase + 0);
+        *(devBase + 1) = ACK;
+
+        semIndex = (intLineNo - 3) * DEVICES_PER_LINE + devNo;
+        klog_print("semaforo da cui sbloccare processo:");
+        klog_print_dec(semIndex);
+
+        device_semaphores[semIndex]++;
+
+        if (device_semaphores[semIndex] <= 0) {
+            pcb_t *unblocked = removeBlocked(&device_semaphores[semIndex]);
+            if (unblocked != NULL) {
+                unblocked->p_s.reg_a0 = savedStatus;
+                unblocked->p_semAdd = NULL;
+                softblockcount--;
+                insertProcQ(&readyQueue, unblocked);
+            }
+        }
     }
-    
-   //Salvataggio status code
-    statusCode = *statusReg & STATUSMASK;
-    
-    //Acknowledgement dell'interrupt
-    *commandReg = ACK;
-    
-    // Operazione V sul device semaphore
-    semIndex = getSemaphoreIndex(intLineNo, devNo, isTransmitter);
-    unblockedProc = removeBlocked(&device_semaphores[semIndex]);
-    
-    //Sbloccare un processo se ce ne sono di bloccati
-    if (unblockedProc != NULL) {
-        // Inseriemnto status code nel registro a0 del PCB appena sbloccato
-        unblockedProc->p_s.reg_a0 = statusCode;
-        unblockedProc->p_semAdd = NULL; //Processo non più bloccato 
-        softblockcount--;
-        
-        //Inserimento del PCB nella RadyQueue
-        insertProcQ(&readyQueue, unblockedProc);
-    }
-    
-    //Return Current Process o chiama lo scheduler
+
+    // Ritorna al processo corrente o chiama lo scheduler
     if (current_process != NULL) {
-        state_t *exceptionState = (state_t *)BIOSDATAPAGE;
-        LDST(exceptionState);
+        LDST((state_t *)BIOSDATAPAGE);
     } else {
         scheduler();
     }
 }
 
-
 //Parte 7.2 Processor Local Timer (PLT) Interrupts
+
 void handlePLTInterrupt() {
-    //Acknowledge PLT interrupt mettendo nel timer un nuovo valore
-    setTIMER(TIMESLICE);
-    
-    //Copriare stato CPU nel PCB del Current Process
-    state_t *exceptionState = (state_t *)BIOSDATAPAGE;
-    current_process->p_s = *exceptionState;
-    
-    //Aggiornemento dell'accumulated CPU time
-    cpu_t currentTime;
-    STCK(currentTime);
-    current_process->p_time += (currentTime - processStartTime); 
-    
-    //Inserimento Current Process nella ReadyQueue
-    insertProcQ(&readyQueue, current_process);
-    current_process = NULL;
-    
+    setTIMER((cpu_t) NEVER); // disabilita timer fino a nuovo dispatch
+    if (current_process != NULL) {
+        state_t *state = (state_t *)BIOSDATAPAGE;
+        current_process->p_s = *state; // Salva lo stato del processo corrente
+        current_process->p_s.status |= MSTATUS_MIE_MASK;
+        insertProcQ(&readyQueue, current_process);
+        current_process = NULL;
+    }
     scheduler();
-}
+    return;
+}       
+
 
 
 
@@ -187,6 +331,7 @@ void handleIntervalTimerInterrupt() {
         softblockcount--;
         insertProcQ(&readyQueue, unblockedProc);
     }
+    device_semaphores[PSEUDOCLOCK_INDEX] = 0; // reset del semaforo del pseudo-clock
     
     /* Return to Current Process or call Scheduler */
     if (current_process != NULL) {
@@ -195,6 +340,7 @@ void handleIntervalTimerInterrupt() {
     } else {
         scheduler();
     }
+    return;
 }
 
 
@@ -238,6 +384,7 @@ void handleIntervalTimerInterrupt() {
 //}
 
 //altro crazy talk
+// ritorna la linea dell'interupt con priorità maggiore
 int findHighestPriorityInterrupt(unsigned int *bitMap) {
     unsigned int cause = getCAUSE();
     int intLineNo = 0;
@@ -253,7 +400,7 @@ int findHighestPriorityInterrupt(unsigned int *bitMap) {
     else return 0;
 
     if (intLineNo >= 3) {
-        unsigned int *bitMapAddr = (unsigned int *)(INTERRUPT_BIT_MAP + ((intLineNo - 3) * 4));
+        unsigned int *bitMapAddr = (unsigned int *)(INTERRUPT_BIT_MAP + ((intLineNo - 3) * 0x4));
         *bitMap = *bitMapAddr;
         if (*bitMap == 0) return 0;
     }
@@ -266,29 +413,47 @@ int findHighestPriorityInterrupt(unsigned int *bitMap) {
 //Main Interrupt Exception Handler
 //Chimato da exceptionHandler quando CAUSE_IS_INT è true
 void interruptHandler() {
-    unsigned int bitMap = 0;
-    int intLineNo;
-    
-    //Trova interrupt con priorità più alta
-    intLineNo = findHighestPriorityInterrupt(&bitMap);
-    
-    if (intLineNo == 0) {
-        //se l'interrupt non esiste
-        return;
+    state_t *state = (state_t *)BIOSDATAPAGE; //dove il processore salva lo stato in caso di eccezione
+    unsigned int cause = state->cause;
+    unsigned int excCode = cause & 0xFFu; // CAUSE_EXCCODE_MASK
+    klog_print("INTERRUPT HANDLER ENTRY\n");
+   
+    cpu_t currentTime;
+    STCK(currentTime);
+    if(current_process != NULL) {
+        current_process->p_time += (currentTime - processStartTime);
     }
+    startTOD = currentTime; //aggiorno startTOD per il processo che verrà dispatchato dopo l'interrupt, così quando tornerà a fare updateCPUtime avrà il tempo giusto da aggiungere a p_time
     
-    switch (intLineNo) {
-        case PLT_INT_LINE:
+    switch (excCode) {
+        case IL_CPUTIMER:
+            klog_print("Handling PLT Interrupt\n");
             handlePLTInterrupt();
-            break;
+        
             
-        case INTERVAL_TIMER_LINE:
+        case IL_TIMER:
+            klog_print("Handling Interval Timer Interrupt\n");
             handleIntervalTimerInterrupt();
-            break;
+            
             
         default:
             //Device interrupts (lines 3-7)
-            handleNonTimerInterrupt(intLineNo, bitMap);
-            break;
+            if(excCode >= IL_DISK && excCode <= IL_TERMINAL) {
+                klog_print("Handling Device Interrupt");
+                klog_print("\n");
+                int intLineNo = (int)(excCode - 14u);
+                unsigned int bitMap = (*(unsigned int *)(INTERRUPT_BIT_MAP + ((intLineNo - 3) * 0x4)));
+                klog_print("STO PER ENTRARE IN handleNonTimerInterrupt\n");
+                handleNonTimerInterrupt(intLineNo, bitMap);
+            } else {
+                klog_print("UNKNOWN INTERRUPT TYPE\n");
+            }
+            
     }
+    if(current_process != NULL) {
+        state_t *exceptionState = (state_t *)BIOSDATAPAGE;
+        LDST(exceptionState);
+    } else {
+        scheduler();    
+    }    
 }
