@@ -1,0 +1,4 @@
+/home/alice/Downloads/starterKit/cmake-build-debug/CMakeFiles/MultiPandOS.dir
+/home/alice/Downloads/starterKit/cmake-build-debug/CMakeFiles/MultiPandOSuRISCV.dir
+/home/alice/Downloads/starterKit/cmake-build-debug/CMakeFiles/edit_cache.dir
+/home/alice/Downloads/starterKit/cmake-build-debug/CMakeFiles/rebuild_cache.dir

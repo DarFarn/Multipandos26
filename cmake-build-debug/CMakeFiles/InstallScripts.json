@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/alice/Downloads/starterKit/cmake-build-debug/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

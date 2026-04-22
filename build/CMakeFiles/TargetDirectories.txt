@@ -1,0 +1,4 @@
+/home/alice/Downloads/PandOS-project/starterKit/build/CMakeFiles/MultiPandOS.dir
+/home/alice/Downloads/PandOS-project/starterKit/build/CMakeFiles/MultiPandOSuRISCV.dir
+/home/alice/Downloads/PandOS-project/starterKit/build/CMakeFiles/edit_cache.dir
+/home/alice/Downloads/PandOS-project/starterKit/build/CMakeFiles/rebuild_cache.dir

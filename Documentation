@@ -1,0 +1,20 @@
+# Part 1 - PandOS
+
+## 1. PCB
+The initPcbs() and the freePcb(pcb_t* p) functions have been implemented using INIT_LIST_HEAD, to initialize all of the pcbs fields, to the be added to the pcbFree_h list.
+
+In the allocPcb() function, after making sure that there is a free Pcb to allocate and removing it from the free list, the memset function is called to set all of the pcb values to zero or NULL, except fro the pid.
+
+The insertProcQ takes care of inserting a process in the right spot inside of a process queue, based on its priority.
+
+insertChild(pcb_t* prnt, pcb_t* p) sets prnt as p's parent. If p already has a parent, it is removed from its parents children list, as well as from the siblings, and then linked to the new parent.
+
+
+## 2. ASL
+We implemented a findSemd(int* semAdd) function, which looks for the semaphore with the semAdd key in the semd_h list, to check if it's active or not.
+
+This is used for example in the insertBlocked function, to check whether the semaphore in which we want to add the pcb is active or not.
+If not active a new semaphore is taken from the free list, his address is set and the process queue initialized. Then the process is added in order of key value.
+
+In the outBlocked function we use findSemd to find p's semaphore, to then remove the process from it's process queue using outProcQ.
+After this, if the semaphore's process queue is left empy, it is added to the free semaphores list.
