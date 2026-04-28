@@ -93,7 +93,11 @@ void createProcess(state_t *state){
 void processKiller(pcb_t* p){
     if(p==NULL) return;
     while(!emptyChild(p)){
+        klog_print("ALSO KILLED CHILDREN WITH PID:");
+
         pcb_t* child = removeChild(p);
+        klog_print_dec(child->p_pid);
+        klog_print("\n");
         processKiller(child);
     }
     outChild(p);
@@ -136,10 +140,10 @@ pcb_t* findProcess(int pid){
 
 void terminateProcess(state_t *state){
     if(state->reg_a1 == 0){
-        processKiller(current_process);
-        current_process = NULL;
         klog_print("JUST TEMRINATED PROCESS WITH PID:");
         klog_print_dec(current_process->p_pid);
+        processKiller(current_process);
+        current_process = NULL;
     }
     else{
         pcb_t* toKill = findProcess(state->reg_a1);
@@ -152,17 +156,15 @@ void terminateProcess(state_t *state){
             
             
         }
-        processKiller(toKill);
         klog_print("JUST TEMRINATED PROCESS WITH PID:");
         klog_print_dec(toKill->p_pid);
-
+        processKiller(toKill);
     }
-    
     scheduler();
 }
 
 void passeren(state_t* state){
-    klog_print("STARTANDO LA P OPERATION\n");
+    // klog_print("STARTANDO LA P OPERATION\n");
     int *semAdd = (int *)state->reg_a1;
     updateCPUtime();
     if (semAdd == NULL) {
@@ -198,12 +200,12 @@ void passeren(state_t* state){
 }
 
 void verhogen(state_t* state){
-    klog_print("starting V operation\n");
+    // klog_print("starting V operation\n");
     int *semAdd = (int *)state->reg_a1; 
     updateCPUtime();
     current_process->p_s = *state;
     //klog_print("V addr:");
-        klog_print_hex((unsigned int)semAdd);
+    //    klog_print_hex((unsigned int)semAdd);
     (*semAdd)++;
     if(*semAdd <= 0){
         pcb_t* toFree = removeBlocked(semAdd);
@@ -385,7 +387,7 @@ void doIO(state_t *state) {
  */
 
 void doIO(state_t *state) {
-    klog_print("STARTANDO LA DOIO OPERATION\n");
+  //  klog_print("STARTANDO LA DOIO OPERATION\n");
 
     int *commandAddr = (int *) state->reg_a1;
     int commandValue = (int) state->reg_a2;
@@ -499,6 +501,9 @@ void yield(state_t *state){
 void passUpOrDie(int index) {
     //klog_print("PassUPorDie opeartion started");
     if (current_process->p_supportStruct == NULL) {
+        updateCPUtime();
+        klog_print("ABOUT TO KILL PROCESS FOR PASSUPORDIE, PID:");  
+        klog_print_dec(current_process->p_pid);
         processKiller(current_process);
         current_process = NULL;
         klog_print("KILLATO PROCESSO CORRENTE PER MANCANZA SUPPORT STRUCT");
@@ -506,8 +511,9 @@ void passUpOrDie(int index) {
     } else {
       //  klog_print("PassUPorDie operation continuing");
         support_t *sup = current_process->p_supportStruct;
-        state_t *savedState = GET_EXCEPTION_STATE_PTR(0);
+        state_t *savedState = (state_t *) BIOSDATAPAGE;
         sup->sup_exceptState[index] = *savedState;
+        sup->sup_exceptState[index].status |= MSTATUS_MPP_M;
         LDCXT(sup->sup_exceptContext[index].stackPtr, 
             sup->sup_exceptContext[index].status, 
             sup->sup_exceptContext[index].pc);
@@ -626,12 +632,7 @@ void exceptionHandler(){
 //    klog_print_hex(savedState->status);
   //  klog_print("raw cause:");
     //klog_print_hex(getCAUSE());
-    if (excCode == 7) {
-        klog_print("ATTENZIONE--------!!!!!!!!!!! code 7 - entry_hi:");
-        klog_print_hex(savedState->entry_hi);
-        klog_print("code 7 - pc_epc:");
-        klog_print_hex(savedState->pc_epc);
-    }
+   
    
 
     if(cause & 0x80000000){  
@@ -640,7 +641,13 @@ void exceptionHandler(){
     }
     //klog_print("exc:");
     //klog_print_dec(excCode);
-    if(excCode >= 24 && excCode <= 28){ 
+    if(excCode >= 24 && excCode <= 28){
+        tlbHandler();
+        return;
+    }
+    /* uRISCV may report a KUSEG translation fault as BUSERROR in this phase setup.
+       Route those faults to PGFAULTEXCEPT so p5a correctly reaches p5mm. */
+    else if (excCode == 7 && getBADVADDR() >= KUSEG) {
         tlbHandler();
         return;
     }

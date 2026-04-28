@@ -416,7 +416,7 @@ void interruptHandler() {
     state_t *state = (state_t *)BIOSDATAPAGE; //dove il processore salva lo stato in caso di eccezione
     unsigned int cause = state->cause;
     unsigned int excCode = cause & 0xFFu; // CAUSE_EXCCODE_MASK
-    klog_print("INTERRUPT HANDLER ENTRY\n");
+    // klog_print("INTERRUPT HANDLER ENTRY\n");
    
     cpu_t currentTime;
     STCK(currentTime);
@@ -429,12 +429,12 @@ void interruptHandler() {
         case IL_CPUTIMER:
           //  klog_print("Handling PLT Interrupt\n");
             handlePLTInterrupt();
-        
+            return;
             
         case IL_TIMER:
          //   klog_print("Handling Interval Timer Interrupt\n");
             handleIntervalTimerInterrupt();
-            
+            return;
             
         default:
             //Device interrupts (lines 3-7)
@@ -448,7 +448,7 @@ void interruptHandler() {
             } else {
                 klog_print("UNKNOWN INTERRUPT TYPE\n");
             }
-            
+            return;
     }
     if(current_process != NULL) {
         state_t *exceptionState = (state_t *)BIOSDATAPAGE;

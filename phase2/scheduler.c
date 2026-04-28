@@ -18,7 +18,7 @@ cpu_t processStartTime; // forse va inizializzato a 0, da vedere!!!!!!!!!!!!!!!!
 extern pcb_t *activeProcs[MAXPROC]; // array che contiene i puntatori a tutti i processi attivi, da 0 a MAXPROC-1, se un indice è null allora il processo è terminato
 
 void scheduler(void) { 
-    klog_print("ciao sei nello scheduler :)\n");
+    // klog_print("ciao sei nello scheduler :)\n");
      /* 1. Se c’è un processo ready lo eseguiamo */
 
     /* 1. Se c’è un processo ready lo eseguiamo */

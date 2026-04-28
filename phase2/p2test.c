@@ -564,7 +564,7 @@ void p5gen()
 }
 
 /* p5's memory management trap handler */
-void p5mm() {
+void p5mm() { // qyi non ci entra mai
     klog_print("P5MM ENTERED\n");
     print("memory management trap\n");
 
@@ -653,6 +653,7 @@ void p5b() {
 /*p6 -- high level syscall without initializing passup vector */
 void p6() {
     print("p6 starts\n");
+    klog_print("ABOUT TO TERMINATE P6 FOR MISSING PASSUP VECTOR\n");
 
     SYSCALL(1, 0, 0, 0); /* should cause termination because p6 has no
            trap vector */
@@ -665,6 +666,7 @@ void p6() {
 /*p7 -- program trap without initializing passup vector */
 void p7() {
     print("p7 starts\n");
+    klog_print("ABOUT TO KILL P7 WITH PROGRAM TRAP WITHOUT PASSUPT VECTOR\n");
 
     *((memaddr *)BADADDR) = 0;
 
@@ -761,18 +763,24 @@ void p8leaf4() {
 void p9() {
     print("p9 starts\n");
     SYSCALL(CREATEPROCESS, (int)&p10state, PROCESS_PRIO_LOW, (int)NULL); /* start p7		*/
+    klog_print("P9 JUST CREATED P10, ABOUT TO P BLOCK\n");
     SYSCALL(PASSEREN, (int)&sem_blkp9, 0, 0);
+    
 }
 
 
 void p10() {
     print("p10 starts\n");
-    int ppid = SYSCALL(GETPROCESSID, 1, 0, 0);
+    int ppid = SYSCALL(GETPROCESSID, 1, 0, 0); // ritorn il pid del padre, p9
+    klog_print("P9 PID, as fahter of P10:");
+    klog_print_dec(ppid);
+    klog_print("\n");
 
     if (ppid != p9pid) {
         print("Inconsistent process id for p9!\n");
         PANIC();
     }
+    klog_print("ABOUT TO TERMINATE P9, quindi anche p10");
 
     SYSCALL(TERMPROCESS, ppid, 0, 0);
 
