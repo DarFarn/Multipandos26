@@ -1,50 +1,87 @@
-
-#include "../headers/listx.h"
-#include "../headers/const.h"
-#include "../headers/types.h"
-#include "../phase1/headers/asl.h"
-#include "../phase1/headers/pcb.h"
-#include <uriscv/liburiscv.h>
-#include <uriscv/types.h>
-#include <uriscv/const.h>
-#include "../headers/klog.h"
-#include "../phase2/headers/exceptions.h"
-#include "../phase2/headers/scheduler.h"
 #include "../phase3/headers/support.h"
 
+void uTLB_RefillHandler() {
 
-void uTLB_RefillHandler(){ //uTLB_RefillHandler (cosa intende per dovrebbe ancora trovarsi in exceptions.c? prob devo scriverla e poi metterla lì)
-//1.recupera the saved exception state located at the start of the BIOS Data Page.
-state_t *saved = GET_EXCEPTION_STATE_PTR(0) //dovrebbe essere la macro giusta ma sta da capire come variare numero CPU
-//2. estrai la pagina mancante dalla parte di entryhi di saved 
-unsigned int vpn = saved->entry_hi;
-unsigned int p;
-//offset dato dai vpn in teoria?
-if (vpn >= 0x80000 && vpn <= 0x8001E){
-p = vpn - 0x80000;
-else if (vpn == 0xBFFFF)
-p = 31; }
+    state_t *saved = GET_EXCEPTION_STATE_PTR(0);
+
+    unsigned int vpn = saved->entry_hi;
+    unsigned int p;
+
+    if (vpn >= 0x80000 && vpn <= 0x8001E)
+        p = vpn - 0x80000;
+    else
+        p = 31;
+
+    support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
+
+    pteEntry_t pte = sup->sup_privatePgTbl[p];
+
+    setENTRYHI(pte.entry_hi);
+    setENTRYLO(pte.entry_lo);
+    TLBWR();
+
+    LDST(saved);
+}
+
+#define POOLSIZE (2 * UPROCMAX)
+
+swap_t swap_pool[POOLSIZE];
+int swapSem = 1;
+int nextFrame = 0;
+
+void initSwapStructs() {
+    for (int i = 0; i < POOLSIZE; i++) {
+        swap_pool[i].asid = -1;
+        swap_pool[i].vpn = -1;
+        swap_pool[i].pte = NULL;
+    }
+}
 
 
-//3. recupera la page table del processo corrente
-support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0 ,0);
-pteEntry_t *pt = sup->sup_privatePgTbl;
-//4. Prendi la entry corrispondente nella page table (ma si chiama pte nel progetto?)
-pteEntry_t pte = pt[vpn];
-//5. Scrivi nella TLB
-setENTRYHI(pte.entry_hi);
-setENTRYLO(pte.entry_lo);
-TLBWR(); //TLBWR funziona così?
+//scrivere pager secondo algoritmo di 16 passi, questo scheletro semplificato da rivedere
 
-//6. riprendi il processo da saved
-LDST(saved);
+void pager() {
 
-//bozza di refillhandler finita
+    support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
 
+    state_t *state = &sup->sup_exceptState[PGFAULTEXCEPT];
 
+    unsigned int vpn = state->entry_hi;
+    unsigned int p;
 
-//scrivere pager secondo algoritmo di 16 passi, vedi su chatgpt
+    if (vpn >= 0x80000 && vpn <= 0x8001E)
+        p = vpn - 0x80000;
+    else
+        p = 31;
 
+    SYSCALL(PASSEREN, (int)&swapSem, 0, 0);
+
+    int frame = nextFrame;
+    nextFrame = (nextFrame + 1) % POOLSIZE;
+
+    /* if occupied → invalidate */
+    if (swap_pool[frame].asid != -1) {
+        swap_pool[frame].pte->entry_lo &= ~VALIDON;
+    }
+
+    /* load page from flash (stub) */
+    flashRead(sup->sup_asid, p, frame);
+
+    /* update swap table */
+    swap_pool[frame].asid = sup->sup_asid;
+    swap_pool[frame].vpn = p;
+    swap_pool[frame].pte = &sup->sup_privatePgTbl[p];
+
+    /* update page table */
+    sup->sup_privatePgTbl[p].entry_lo |= VALIDON;
+
+    /* update TLB (easy version) */
+    TLBCLR();
+
+    SYSCALL(VERHOGEN, (int)&swapSem, 0, 0);
+
+    LDST(state);
+}
 
 
 
