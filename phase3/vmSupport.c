@@ -1,97 +1,10 @@
+#include "../headers/types.h"
+#include <uriscv/liburiscv.h>
+#include "../headers/const.h"
+#include <uriscv/types.h>
+#include <uriscv/const.h>
+#include "../phase2/headers/exceptions.h"
 #include "../phase3/headers/support.h"
-
-void uTLB_RefillHandler() {
-
-    state_t *saved = GET_EXCEPTION_STATE_PTR(0);
-
-    unsigned int vpn = saved->entry_hi;
-    unsigned int p;
-
-    if (vpn >= 0x80000 && vpn <= 0x8001E)
-        p = vpn - 0x80000;
-    else
-        p = 31;
-
-    support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
-
-    pteEntry_t pte = sup->sup_privatePgTbl[p];
-
-    setENTRYHI(pte.entry_hi);
-    setENTRYLO(pte.entry_lo);
-    TLBWR();
-
-    LDST(saved);
-}
-
-#define POOLSIZE (2 * UPROCMAX)
-
-swap_t swap_pool[POOLSIZE];
-int swapSem = 1;
-int nextFrame = 0;
-
-void initSwapStructs() {
-    for (int i = 0; i < POOLSIZE; i++) {
-        swap_pool[i].asid = -1;
-        swap_pool[i].vpn = -1;
-        swap_pool[i].pte = NULL;
-    }
-}
-
-
-//scrivere pager secondo algoritmo di 16 passi, questo scheletro semplificato da rivedere
-
-void pager() {
-
-    support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
-
-    state_t *state = &sup->sup_exceptState[PGFAULTEXCEPT];
-
-    unsigned int vpn = state->entry_hi;
-    unsigned int p;
-
-    if (vpn >= 0x80000 && vpn <= 0x8001E)
-        p = vpn - 0x80000;
-    else
-        p = 31;
-
-    SYSCALL(PASSEREN, (int)&swapSem, 0, 0);
-
-    int frame = nextFrame;
-    nextFrame = (nextFrame + 1) % POOLSIZE;
-
-    /* if occupied → invalidate */
-    if (swap_pool[frame].asid != -1) {
-        swap_pool[frame].pte->entry_lo &= ~VALIDON;
-    }
-
-    /* load page from flash (stub) */
-    flashRead(sup->sup_asid, p, frame);
-
-    /* update swap table */
-    swap_pool[frame].asid = sup->sup_asid;
-    swap_pool[frame].vpn = p;
-    swap_pool[frame].pte = &sup->sup_privatePgTbl[p];
-
-    /* update page table */
-    sup->sup_privatePgTbl[p].entry_lo |= VALIDON;
-
-    /* update TLB (easy version) */
-    TLBCLR();
-
-    SYSCALL(VERHOGEN, (int)&swapSem, 0, 0);
-
-    LDST(state);
-}
-
-
-
-
-
-
-
-
-
-
 
 //swap pool table is local to this module quindi da initproc la mettiamo qua?
 
@@ -102,22 +15,97 @@ void pager() {
 
 //concretamente la implementerò quindi come un array di struct tipo:
 
-typedef struct{
-int ASID; 
-int vpn;
-pteEntry_t *pte;
-} swap_t;
-
-swap_t swap_pool[SWAP POOL SIZE]; //ricordarsi di aumentare la size effettivamente ad ogni frame 
+swap_t swap_pool[POOLSIZE]; //ricordarsi di aumentare la size effettivamente ad ogni frame 
 
 int swapSem; //swapmutexsemaphore
 
-int flashRead(int asid, int page, int frame);
-int flashWriteW(int asid, int page, int frame);
+int flashRW(int asid, int page, int frame, const RW) {
+
+support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0,0);  //get support structure corrispondente al device
+unsigned int physAddr = (unsigned int) frame;//computa indirizzo fisico del frame (assumendo che sia allineato a 4k)
+
+SYSCALL(DOIO, asid, DATA0, physAddr); //scrivi sul campo DATA0 l'indirizzo fisico appropriato del blocco di 4k da scrivere o leggere
+
+unsigned int command = (blocknumber << 8 | RW); // costruisci command mettendo nei 3 bytes alti il block number e in quelli bassi il comando READ?
+int status = SYSCALL(DOIO, asid, COMMAND, command);
+return status;
+}
 
 int nextFrame = 0;
 
-initSwapStructs();//chiamato da test, capire cosa deve fare
+int getPageNumber(){
+unsigned int vpn = getENTRYHI();
+unsigned int p;
+
+    if (vpn >= 0x80000 && vpn <= 0x8001E)
+       return p = vpn - 0x80000;
+    else
+       return p = 31;
+}
+
+#define POOLSIZE (2 * UPROCMAX)
+
+swap_t swap_pool[POOLSIZE];
+int swapSem = 1;
+
+void initSwapStructs() {
+    for (int i = 0; i < POOLSIZE; i++) {
+        swap_pool[i].sw_asid = -1;
+        swap_pool[i].sw_pageNo= -1;
+        swap_t *s = &swap_pool[i];
+        s->sw_pte = NULL;
+    }
+}
+
+
+//scrivere pager secondo algoritmo di 16 passi, questo scheletro semplificato da rivedere
+
+void pager() {
+
+state_t *saved = GET_EXCEPTION_STATE_PTR(0);
+
+    unsigned int p = getPageNumber();
+    
+    support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
+
+    SYSCALL(PASSEREN, (int)&swapSem, 0, 0);
+
+    int frame = nextFrame;
+    nextFrame = (nextFrame + 1) % POOLSIZE;
+
+    /* if occupied → invalidate */
+    if (swap_pool[frame].sw_asid != -1) {
+        swap_pool[frame].sw_pte->pte_entryLO &= ~VALIDON;
+    }
+
+    /* load page from flash (stub) */
+    flashRW(sup->sup_asid, p, frame, FLASHREAD);
+
+    /* update swap table */
+    swap_pool[frame].sw_asid = sup->sup_asid;
+    swap_pool[frame].sw_pageNo = p;
+    swap_pool[frame].sw_pte = &sup->sup_privatePgTbl[p];
+
+    /* update page table */
+    sup->sup_privatePgTbl[p].pte_entryLO |= VALIDON;
+
+    /* update TLB (easy version) */
+    TLBCLR();
+
+    SYSCALL(VERHOGEN, (int)&swapSem, 0, 0);
+
+    LDST(saved);
+}
+
+
+
+ int sw_asid;        /* ASID number			*/
+    int sw_pageNo;      /* page's virt page no.	*/
+    pteEntry_t *sw_pte; /* page's PTE entry.	*/
+
+
+
+
 
 
 
