@@ -1,112 +1,137 @@
-#include "../headers/types.h"
 #include <uriscv/liburiscv.h>
-#include "../headers/const.h"
 #include <uriscv/types.h>
 #include <uriscv/const.h>
-#include "../phase2/headers/exceptions.h"
-#include "../phase3/headers/support.h"
+#include "../headers/types.h"
+#include "../headers/const.h"
+#include "../phase2/headers/interrupts.h"
+#include "headers/support.h"
 
-//swap pool table is local to this module quindi da initproc la mettiamo qua?
-
-//swap pool table:
-//tabella con una entry per ogni frame della swap pool (=set di frame lasciati da parte per supportare 
-//la memoria virtuale, composta da tre colonne con 1.ASID dell'UPROC che occupa il frame 2. VPN della pagina occupante 3. pointer alla
-//entry corrispondente a quell'ASID ma nella page table (= strutt. dati che mappa indirizzi fisici usati da un processo a indirizzi in RAM)
-
-//concretamente la implementerò quindi come un array di struct tipo:
-
-swap_t swap_pool[POOLSIZE]; //ricordarsi di aumentare la size effettivamente ad ogni frame 
-
-int swapSem; //swapmutexsemaphore
-
-int flashRW(int asid, int page, int frame, const RW) {
-
-support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0,0);  //get support structure corrispondente al device
-unsigned int physAddr = (unsigned int) frame;//computa indirizzo fisico del frame (assumendo che sia allineato a 4k)
-
-SYSCALL(DOIO, asid, DATA0, physAddr); //scrivi sul campo DATA0 l'indirizzo fisico appropriato del blocco di 4k da scrivere o leggere
-
-unsigned int command = (blocknumber << 8 | RW); // costruisci command mettendo nei 3 bytes alti il block number e in quelli bassi il comando READ?
-int status = SYSCALL(DOIO, asid, COMMAND, command);
-return status;
-}
-
-int nextFrame = 0;
-
-int getPageNumber(){
-unsigned int vpn = getENTRYHI();
-unsigned int p;
-
-    if (vpn >= 0x80000 && vpn <= 0x8001E)
-       return p = vpn - 0x80000;
-    else
-       return p = 31;
-}
-
-#define POOLSIZE (2 * UPROCMAX)
+/* getDeviceRegAddr() (phase2/interrupts.c) expects the small interrupt
+   *line* number (Table 1 of the spec: disk=3, flash=4, ...), not the
+   IL_FLASH interrupt *exception code* (18) used for interrupt routing;
+   the two are related by "line = exception code - 14" for device lines. */
+#define FLASH_INTLINE (IL_FLASH - 14)
 
 swap_t swap_pool[POOLSIZE];
-int swapSem = 1;
+int swapSem;
+
+/* FIFO page replacement algorithm: whenever a frame is needed, simply
+   pick the next one, round robin. */
+static int nextFrame = 0;
 
 void initSwapStructs() {
-    for (int i = 0; i < POOLSIZE; i++) {
+    int i;
+
+    for (i = 0; i < POOLSIZE; i++) {
         swap_pool[i].sw_asid = -1;
-        swap_pool[i].sw_pageNo= -1;
-        swap_t *s = &swap_pool[i];
-        s->sw_pte = NULL;
+        swap_pool[i].sw_pageNo = -1;
+        swap_pool[i].sw_pte = NULL;
     }
+
+    swapSem = 1;
+    nextFrame = 0;
 }
 
+/* Reads/writes one 4Kb block from/to the flash device dedicated to the
+   given ASID (flash device number == asid - 1). "command" is FLASHREAD
+   or FLASHWRITE, "block" is the flash block (== logical page) number and
+   "frameAddr" is the physical address of the RAM frame involved. Returns
+   the device's completion status. */
+static int flashRW(int asid, int block, memaddr frameAddr, int command) {
+    unsigned int *devReg = getDeviceRegAddr(FLASH_INTLINE, asid - 1);
+    unsigned int commandValue;
 
-//scrivere pager secondo algoritmo di 16 passi, questo scheletro semplificato da rivedere
+    devReg[2] = (unsigned int) frameAddr; /* DATA0 */
+    commandValue = (block << 8) | command;
 
+    return SYSCALL(DOIO, (int) &devReg[1], (int) commandValue, 0); /* COMMAND */
+}
+
+/* Returns the logical page number (0..31) of the address currently
+   loaded in EntryHi, i.e. the page whose translation just missed the
+   TLB. Pages [0..30] are the .text/.data pages, anything else (in
+   particular the stack, at 0xBFFFF000) is treated as page 31. */
+static int getPageNumber() {
+    unsigned int vpn = getENTRYHI() >> VPNSHIFT;
+    unsigned int firstPage = KUSEG >> VPNSHIFT;
+    unsigned int lastPage = firstPage + (USERPGTBLSIZE - 2);
+
+    if (vpn >= firstPage && vpn <= lastPage)
+        return (int) (vpn - firstPage);
+
+    return USERPGTBLSIZE - 1;
+}
+
+/* The Pager: Support Level TLB exception handler. Implements the 14-step
+   algorithm described in the Phase 3 spec, Section 4.2. */
 void pager() {
 
-state_t *saved = GET_EXCEPTION_STATE_PTR(0);
-
-    unsigned int p = getPageNumber();
-    
     support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
+    state_t *savedState = &sup->sup_exceptState[PGFAULTEXCEPT];
+    int p, frame, status;
+    memaddr frameAddr;
+    unsigned int statusReg;
 
-    SYSCALL(PASSEREN, (int)&swapSem, 0, 0);
+    /* Page Table entries are always marked dirty (writable), so a
+       TLB-Modification exception should never legitimately occur; every
+       TLB exception reaching the Pager is therefore handled as an
+       ordinary page fault. */
 
-    int frame = nextFrame;
+    SYSCALL(PASSEREN, (int) &swapSem, 0, 0);
+
+    p = getPageNumber();
+
+    /* pick a frame (FIFO) */
+    frame = nextFrame;
     nextFrame = (nextFrame + 1) % POOLSIZE;
+    frameAddr = SWAPPOOLSTART + (frame * PAGESIZE);
 
-    /* if occupied → invalidate */
+    /* if the frame is occupied, evict its current owner */
     if (swap_pool[frame].sw_asid != -1) {
+
+        /* mark the old owner's PTE invalid ... */
         swap_pool[frame].sw_pte->pte_entryLO &= ~VALIDON;
+
+        /* ... and, atomically, drop the stale TLB entry (if cached) */
+        statusReg = getSTATUS();
+        setSTATUS(statusReg & ~MSTATUS_MIE_MASK);
+        TLBCLR();
+        setSTATUS(statusReg);
+
+        /* write the (possibly dirty) frame back to its owner's backing
+           store before reusing it */
+        status = flashRW(swap_pool[frame].sw_asid, swap_pool[frame].sw_pageNo, frameAddr, FLASHWRITE);
+        if (status != READY) {
+            SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
+            terminateUProc();
+            return;
+        }
     }
 
-    /* load page from flash (stub) */
-    flashRW(sup->sup_asid, p, frame, FLASHREAD);
+    /* bring the missing page in from the Current Process's own backing
+       store */
+    status = flashRW(sup->sup_asid, p, frameAddr, FLASHREAD);
+    if (status != READY) {
+        SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
+        terminateUProc();
+        return;
+    }
 
-    /* update swap table */
+    /* update the Swap Pool table */
     swap_pool[frame].sw_asid = sup->sup_asid;
     swap_pool[frame].sw_pageNo = p;
     swap_pool[frame].sw_pte = &sup->sup_privatePgTbl[p];
 
-    /* update page table */
-    sup->sup_privatePgTbl[p].pte_entryLO |= VALIDON;
+    /* update the Current Process's Page Table entry and, atomically,
+       the TLB */
+    sup->sup_privatePgTbl[p].pte_entryLO = frameAddr | DIRTYON | VALIDON;
 
-    /* update TLB (easy version) */
+    statusReg = getSTATUS();
+    setSTATUS(statusReg & ~MSTATUS_MIE_MASK);
     TLBCLR();
+    setSTATUS(statusReg);
 
-    SYSCALL(VERHOGEN, (int)&swapSem, 0, 0);
+    SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
 
-    LDST(saved);
+    LDST(savedState);
 }
-
-
-
- int sw_asid;        /* ASID number			*/
-    int sw_pageNo;      /* page's virt page no.	*/
-    pteEntry_t *sw_pte; /* page's PTE entry.	*/
-
-
-
-
-
-
-
-
