@@ -1,0 +1,79 @@
+/* PandOSsh interactive shell.
+ *
+ * Reads a program name from the terminal and, if it recognizes it,
+ * launches it (SYS6) and waits for it to terminate before prompting
+ * again. Typing "exit" ends the shell.
+ */
+
+#include <uriscv/liburiscv.h>
+
+#include "h/tconst.h"
+#include "h/print.h"
+
+#define MAXLINE 32
+
+typedef struct {
+	char *name;
+	int   asid;
+} prog_t;
+
+#define NPROGS 7
+
+/* static mapping between a program's name and its ASID: each program is
+   preloaded on its own dedicated flash device, one per ASID */
+static prog_t programs[NPROGS] = {
+	{"calc",      2},
+	{"echo",      3},
+	{"date",      4},
+	{"uname",     5},
+	{"sl",        6},
+	{"fibEight",  7},
+	{"fibEleven", 8},
+};
+
+static int strEq(char *a, char *b) {
+	int i;
+
+	for (i = 0; a[i] != EOS && b[i] != EOS; i++)
+		if (a[i] != b[i])
+			return 0;
+
+	return a[i] == EOS && b[i] == EOS;
+}
+
+void main() {
+	char line[MAXLINE];
+	int  status, i, found;
+
+	while (1) {
+		print(WRITETERMINAL, "$ ");
+
+		status = SYSCALL(READTERMINAL, (int) &line[0], 0, 0);
+		if (status < 0)
+			continue; /* read error: try again */
+
+		if (status > 0 && line[status - 1] == '\n')
+			status--;
+		line[status] = EOS;
+
+		if (status == 0)
+			continue; /* empty line */
+
+		if (strEq(line, "exit"))
+			break;
+
+		found = 0;
+		for (i = 0; i < NPROGS; i++) {
+			if (strEq(line, programs[i].name)) {
+				SYSCALL(EXECUTE, programs[i].asid, 0, 0);
+				found = 1;
+				break;
+			}
+		}
+
+		if (!found)
+			print(WRITETERMINAL, "command not found\n");
+	}
+
+	SYSCALL(TERMINATE, 0, 0, 0);
+}
