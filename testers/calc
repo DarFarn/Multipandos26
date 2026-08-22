@@ -1,0 +1,101 @@
+/* Basic calculator: reads an expression made of two single-digit
+ * numbers and one operator (+, -, *, /), e.g. "3+4", and prints the
+ * result.
+ */
+
+#include <uriscv/liburiscv.h>
+
+#include "h/tconst.h"
+#include "h/print.h"
+
+/* prints a (possibly negative) integer followed by a newline */
+static void printInt(int n) {
+	char out[8];
+	int  i, lo, hi, neg;
+	char tmp;
+
+	neg = 0;
+	if (n < 0) {
+		neg = 1;
+		n = -n;
+	}
+
+	i = 0;
+	if (n == 0)
+		out[i++] = '0';
+	while (n > 0) {
+		out[i++] = '0' + (n % 10);
+		n = n / 10;
+	}
+	if (neg)
+		out[i++] = '-';
+
+	/* the digits were produced least-significant first: reverse them */
+	lo = 0;
+	hi = i - 1;
+	while (lo < hi) {
+		tmp = out[lo];
+		out[lo] = out[hi];
+		out[hi] = tmp;
+		lo++;
+		hi--;
+	}
+
+	out[i++] = '\n';
+	out[i] = EOS;
+
+	print(WRITETERMINAL, out);
+}
+
+void main() {
+	char buf[8];
+	int  status, a, b, result;
+	char op;
+
+	print(WRITETERMINAL, "Enter expression (e.g. 3+4): ");
+
+	status = SYSCALL(READTERMINAL, (int) &buf[0], 0, 0);
+	if (status > 0 && buf[status - 1] == '\n')
+		status--;
+	buf[status] = EOS;
+
+	if (status < 3) {
+		print(WRITETERMINAL, "Invalid expression\n");
+		SYSCALL(TERMINATE, 0, 0, 0);
+	}
+
+	a = buf[0] - '0';
+	op = buf[1];
+	b = buf[2] - '0';
+
+	if (a < 0 || a > 9 || b < 0 || b > 9) {
+		print(WRITETERMINAL, "Invalid expression\n");
+		SYSCALL(TERMINATE, 0, 0, 0);
+	}
+
+	switch (op) {
+		case '+':
+			result = a + b;
+			break;
+		case '-':
+			result = a - b;
+			break;
+		case '*':
+			result = a * b;
+			break;
+		case '/':
+			if (b == 0) {
+				print(WRITETERMINAL, "Division by zero\n");
+				SYSCALL(TERMINATE, 0, 0, 0);
+			}
+			result = a / b;
+			break;
+		default:
+			print(WRITETERMINAL, "Unknown operator\n");
+			SYSCALL(TERMINATE, 0, 0, 0);
+	}
+
+	printInt(result);
+
+	SYSCALL(TERMINATE, 0, 0, 0);
+}
