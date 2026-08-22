@@ -1,147 +1,51 @@
-#include <uriscv/liburiscv.h>
-#include <uriscv/types.h>
-#include <uriscv/const.h>
-#include "../headers/types.h"
-#include "../headers/const.h"
-#include "../phase2/headers/interrupts.h"
-#include "headers/support.h"
+#ifndef SUPPORT_H_INCLUDED
+#define SUPPORT_H_INCLUDED
 
-/* getDeviceRegAddr() (phase2/interrupts.c) expects the small interrupt
-   *line* number (Table 1 of the spec: disk=3, flash=4, ...), not the
-   IL_FLASH interrupt *exception code* (18) used for interrupt routing;
-   the two are related by "line = exception code - 14" for device lines. */
-#define FLASH_INTLINE (IL_FLASH - 14)
+#include "../../headers/types.h"
 
-swap_t swap_pool[POOLSIZE];
-int swapSem;
+/* NOTE: support_t, swap_t, context_t and pteEntry_t are already declared
+ * in headers/types.h and must not be redefined here.
+ */
 
-/* FIFO page replacement algorithm: whenever a frame is needed, simply
-   pick the next one, round robin. */
-static int nextFrame = 0;
+/* ===================== vmSupport.c ===================== */
 
-void initSwapStructs() {
-    int i;
+/* Initializes the Swap Pool table and the swapSem mutex.
+   Called once by test() before any U-proc is launched. */
+void initSwapStructs();
 
-    for (i = 0; i < POOLSIZE; i++) {
-        swap_pool[i].sw_asid = -1;
-        swap_pool[i].sw_pageNo = -1;
-        swap_pool[i].sw_pte = NULL;
-    }
+/* The Pager: Support Level TLB exception handler (page fault handler). */
+void pager();
 
-    swapSem = 1;
-    nextFrame = 0;
-}
+/* ===================== sysSupport.c ===================== */
 
-/* Reads/writes one 4Kb block from/to the flash device dedicated to the
-   given ASID (flash device number == asid - 1). "command" is FLASHREAD
-   or FLASHWRITE, "block" is the flash block (== logical page) number and
-   "frameAddr" is the physical address of the RAM frame involved. Returns
-   the device's completion status. */
-static int flashRW(int asid, int block, memaddr frameAddr, int command) {
-    unsigned int *devReg = getDeviceRegAddr(FLASH_INTLINE, asid - 1);
-    unsigned int commandValue;
+/* Support Level general exception handler: entry point reached via
+   sup_exceptContext[GENERALEXCEPT]; dispatches to the SYSCALL handler
+   or to the Program Trap handler. */
+void supGeneralExceptionHandler();
 
-    devReg[2] = (unsigned int) frameAddr; /* DATA0 */
-    commandValue = (block << 8) | command;
+/* Terminates the currently executing U-proc, waking up whoever is
+   waiting for it (the shell, or the InstantiatorProcess for the shell
+   itself). Shared by SYS2 and by the Program Trap handler. */
+void terminateUProc();
 
-    return SYSCALL(DOIO, (int) &devReg[1], (int) commandValue, 0); /* COMMAND */
-}
+/* ===================== initProc.c ===================== */
 
-/* Returns the logical page number (0..31) of the address currently
-   loaded in EntryHi, i.e. the page whose translation just missed the
-   TLB. Pages [0..30] are the .text/.data pages, anything else (in
-   particular the stack, at 0xBFFFF000) is treated as page 31. */
-static int getPageNumber() {
-    unsigned int vpn = getENTRYHI() >> VPNSHIFT;
-    unsigned int firstPage = KUSEG >> VPNSHIFT;
-    unsigned int lastPage = firstPage + (USERPGTBLSIZE - 2);
+/* InstantiatorProcess: replaces the Phase 2 test() placeholder. */
+void test();
 
-    if (vpn >= firstPage && vpn <= lastPage)
-        return (int) (vpn - firstPage);
+/* Allocates and launches (NSYS1) the U-proc with the given ASID. */
+void initUProc(int asid);
 
-    return USERPGTBLSIZE - 1;
-}
+/* ===================== Support Level global variables ===================== */
 
-/* The Pager: Support Level TLB exception handler. Implements the 14-step
-   algorithm described in the Phase 3 spec, Section 4.2. */
-void pager() {
+extern support_t support_structs[UPROCMAX];
 
-    support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
-    state_t *savedState = &sup->sup_exceptState[PGFAULTEXCEPT];
-    int p, frame, status;
-    memaddr frameAddr;
-    unsigned int statusReg;
+extern int masterSem; /* V'ed by the shell when it terminates            */
+extern int shellSem;  /* V'ed by any U-proc launched by the shell         */
+extern int swapSem;   /* mutual exclusion over the Swap Pool table        */
+extern int termReadSem;  /* mutual exclusion over the terminal's receiver */
+extern int termWriteSem; /* mutual exclusion over the terminal's transmitter */
 
-    /* Page Table entries are always marked dirty (writable), so a
-       TLB-Modification exception should never legitimately occur; every
-       TLB exception reaching the Pager is therefore handled as an
-       ordinary page fault. */
+extern swap_t swap_pool[POOLSIZE];
 
-    SYSCALL(PASSEREN, (int) &swapSem, 0, 0);
-
-    p = getPageNumber();
-
-    /* pick a frame (FIFO) */
-    frame = nextFrame;
-    nextFrame = (nextFrame + 1) % POOLSIZE;
-    frameAddr = SWAPPOOLSTART + (frame * PAGESIZE);
-
-    /* if the frame is occupied, evict its current owner */
-    if (swap_pool[frame].sw_asid != -1) {
-
-        /* mark the old owner's PTE invalid ... */
-        swap_pool[frame].sw_pte->pte_entryLO &= ~VALIDON;
-
-        /* ... and, atomically, drop the stale TLB entry (if cached) */
-        statusReg = getSTATUS();
-        setSTATUS(statusReg & ~MSTATUS_MIE_MASK);
-        TLBCLR();
-        setSTATUS(statusReg);
-
-        /* write the (possibly dirty) frame back to its owner's backing
-           store before reusing it */
-        status = flashRW(swap_pool[frame].sw_asid, swap_pool[frame].sw_pageNo, frameAddr, FLASHWRITE);
-        if (status != READY) {
-            SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
-            terminateUProc();
-            return;
-        }
-    }
-
-    /* bring the missing page in from the Current Process's own backing
-       store */
-    status = flashRW(sup->sup_asid, p, frameAddr, FLASHREAD);
-    if (status != READY) {
-        SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
-        terminateUProc();
-        return;
-    }
-
-    /* update the Swap Pool table */
-    swap_pool[frame].sw_asid = sup->sup_asid;
-    swap_pool[frame].sw_pageNo = p;
-    swap_pool[frame].sw_pte = &sup->sup_privatePgTbl[p];
-
-    /* update the Current Process's Page Table entry and, atomically,
-       the TLB */
-    sup->sup_privatePgTbl[p].pte_entryLO = frameAddr | DIRTYON | VALIDON;
-
-    statusReg = getSTATUS();
-    setSTATUS(statusReg & ~MSTATUS_MIE_MASK);
-    TLBCLR();
-    setSTATUS(statusReg);
-
-    SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
-
-    LDST(savedState);
-}
-
-
-
-
-
-
-
-
-
-
+#endif
