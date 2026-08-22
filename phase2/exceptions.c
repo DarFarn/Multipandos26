@@ -24,12 +24,37 @@ extern cpu_t startTOD;
 extern void scheduler();
 extern void interruptHandler();
 
-// void uTLB_RefillHandler() {
-//    setENTRYHI(0x80000000);
-//    setENTRYLO(0x00000000);
-//    TLBWR();
-//    LDST((state_t*) BIOSDATAPAGE);
-//}
+/* TLB-Refill event handler (Phase 3 / Level 4).
+ * Runs in kernel-mode, interrupts disabled, on the Nucleus stack, exactly
+ * like any other Level 3 handler: it is therefore allowed to read
+ * current_process directly. Its job, however, belongs to the Support
+ * Level: look up the missing page in the Current Process's own Page
+ * Table (part of its Support Structure) and load it into the TLB.
+ *
+ * A process without a Support Structure (e.g. the InstantiatorProcess
+ * itself) never runs in user-mode and therefore never touches kuseg, so
+ * it can never legitimately cause a TLB-Refill event.
+ */
+void uTLB_RefillHandler() {
+    unsigned int vpn = getENTRYHI() >> VPNSHIFT;
+    unsigned int firstPage = KUSEG >> VPNSHIFT;
+    unsigned int lastPage = firstPage + (USERPGTBLSIZE - 2);
+    int p;
+    pteEntry_t *pte;
+
+    if (vpn >= firstPage && vpn <= lastPage)
+        p = (int) (vpn - firstPage);
+    else
+        p = USERPGTBLSIZE - 1; /* the stack page */
+
+    pte = &current_process->p_supportStruct->sup_privatePgTbl[p];
+
+    setENTRYHI(pte->pte_entryHI);
+    setENTRYLO(pte->pte_entryLO);
+    TLBWR();
+
+    LDST((state_t *) BIOSDATAPAGE);
+}
 
 static void copyState(state_t *dst, state_t *src) {
     unsigned int *d = (unsigned int *) dst;
@@ -513,8 +538,15 @@ void passUpOrDie(int index) {
         support_t *sup = current_process->p_supportStruct;
         state_t *savedState = (state_t *) BIOSDATAPAGE;
         sup->sup_exceptState[index] = *savedState;
-        sup->sup_exceptState[index].status |= MSTATUS_MPP_M;
-        LDCXT(sup->sup_exceptContext[index].stackPtr, 
+        /* sup_exceptState must be preserved exactly as captured: it is
+         * the U-proc's own processor state at the time of the fault,
+         * and the Support Level will eventually LDST it back verbatim
+         * to resume the faulting instruction. Forcing MSTATUS_MPP_M
+         * here would make every U-proc resume in kernel-mode after any
+         * passed-up exception, which is wrong; kernel-mode for the
+         * *handler* itself is set separately via sup_exceptContext,
+         * below. */
+        LDCXT(sup->sup_exceptContext[index].stackPtr,
             sup->sup_exceptContext[index].status, 
             sup->sup_exceptContext[index].pc);
     }
@@ -553,8 +585,11 @@ void syscallHandler(state_t *state){
         else{  // Kernel mode
             switch(a0){
                 case CREATEPROCESS:
+                    /* pc_epc was already advanced by exceptionHandler(),
+                       once, for every SYSCALL exception; incrementing it
+                       again here would skip an extra instruction on
+                       resume. */
                     createProcess(state);
-                    state->pc_epc = state->pc_epc + 4;
                     LDST(state);
                     return;
                 case TERMPROCESS:
@@ -575,23 +610,23 @@ void syscallHandler(state_t *state){
                     getCPUtime(state);
                     return;
                 case CLOCKWAIT:
-                    state->pc_epc = state->pc_epc + 4;
+                    /* see the note in the CREATEPROCESS case above */
                     updateCPUtime();
                     current_process->p_s = *state;
                     waitForClock(state);
                     return;
                 case GETSUPPORTPTR:
+                    /* see the note in the CREATEPROCESS case above */
                     getSupportData(state);
-                    state->pc_epc = state->pc_epc + 4;
                     LDST(state);
                     return;
                 case GETPROCESSID:
+                    /* see the note in the CREATEPROCESS case above */
                     getProcessID(state);
-                    state->pc_epc = state->pc_epc + 4;
                     LDST(state);
                     return;
                 case YIELD:
-                    state->pc_epc = state->pc_epc + 4;
+                    /* see the note in the CREATEPROCESS case above */
                     yield(state);
                     return;
                 default:
