@@ -128,10 +128,17 @@
 #define SENDMSG 1
 #define RECEIVEMSG 2
 
+/* Support level (positive) SYSCALL numbers */
 #define GET_TOD 1
 #define TERMINATE 2
 #define WRITEPRINTER 3
 #define WRITETERMINAL 4
+#define READTERMINAL 5
+#define EXECUTE 6
+
+/* ASID reserved for the shell U-proc; every other program has a fixed,
+   statically assigned ASID in [2..UPROCMAX] (see testers/shell.c) */
+#define SHELLASID 1
 
 /* Index register constants */
 #define PRESENTFLAG 0x80000000
@@ -194,6 +201,10 @@
 #define MAXPAGES      32
 #define USERPGTBLSIZE MAXPAGES
 #define OSFRAMES      32
+
+/* Swap Pool: placed right after the (overestimated) kernel image, see
+   Phase 3 spec Section 4.1 */
+#define SWAPPOOLSTART (RAMSTART + (OSFRAMES * PAGESIZE))
 
 // #define FLASHPOOLSTART (RAMSTART + (OSFRAMES * PAGESIZE))
 #define DISKPOOLSTART  (FLASHPOOLSTART + (DEVPERINT * PAGESIZE))
