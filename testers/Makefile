@@ -1,3 +1,8 @@
+rm -rf ~/Downloads/Multipandos26-main/cmake-build-debug
+rm -f ~/Downloads/Multipandos26-main/testers/*.o ~/Downloads/Multipandos26-main/testers/*.t ~/Downloads/Multipandos26-main/testers/*.t.aout.uriscv
+sudo apt clean
+df -h /
+
 #$Id: Makefile,v 1.2 2004/05/01 14:53:48 morsiani Exp morsiani $
 # Makefile for mipsel-linux
 #
