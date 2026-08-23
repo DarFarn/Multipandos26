@@ -32,13 +32,25 @@ void terminateUProc() {
 }
 
 /* Returns TRUE if the [addr, addr + len) range lies entirely within the
-   calling U-proc's own logical address space (kuseg). */
+   calling U-proc's own logical address space (kuseg). Used by SYS4
+   (WriteTerminal), which is given an explicit, real length. */
 static int isValidUserRange(unsigned int addr, int len) {
     if (len < 0 || len > MAXSTRLENG)
         return FALSE;
     if (addr < KUSEG || (addr + len) > USERSTACKTOP)
         return FALSE;
     return TRUE;
+}
+
+/* Returns TRUE if addr is a valid starting address within the calling
+   U-proc's own logical address space (kuseg). Used by SYS5
+   (ReadTerminal), which (unlike SYS4) is given no length at all: how
+   many bytes actually get written depends on where the terminating
+   newline shows up, not on a caller-supplied bound, so checking a fixed
+   worst-case range here would reject perfectly valid buffers that
+   happen to sit near the top of the one-page stack. */
+static int isValidUserAddr(unsigned int addr) {
+    return addr >= KUSEG && addr < USERSTACKTOP;
 }
 
 /* SYS4: WriteTerminal */
@@ -81,7 +93,7 @@ static void readTerminal(state_t *state) {
     int count = 0;
     char c;
 
-    if (!isValidUserRange((unsigned int) virtAddr, MAXSTRLENG)) {
+    if (!isValidUserAddr((unsigned int) virtAddr)) {
         terminateUProc();
         return;
     }
@@ -186,5 +198,3 @@ void supGeneralExceptionHandler() {
     else
         supProgramTrapHandler();
 }
-
-
