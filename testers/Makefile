@@ -1,5 +1,6 @@
 #$Id: Makefile,v 1.2 2004/05/01 14:53:48 morsiani Exp morsiani $
 # Makefile for mipsel-linux
+# find / -iname "crtso*" -o -iname "crtsi*" -o -iname "liburiscv.S" -o -iname "*.ldscript" 2>/dev/null
 #
 XT_PRG_PREFIX = riscv64-unknown-elf-
 CC = $(XT_PRG_PREFIX)gcc
