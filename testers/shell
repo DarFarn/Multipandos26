@@ -20,15 +20,18 @@ typedef struct {
 #define NPROGS 7
 
 /* static mapping between a program's name and its ASID: each program is
-   preloaded on its own dedicated flash device, one per ASID */
+   preloaded on its own dedicated flash device (flash device number ==
+   ASID - 1), in the exact order used by the course-provided
+   config_machine.json (flash0=shell, flash1=fibEight, flash2=echo,
+   flash3=fibEleven, flash4=uname, flash5=date, flash6=sl, flash7=calc). */
 static prog_t programs[NPROGS] = {
-	{"calc",      2},
+	{"fibEight",  2},
 	{"echo",      3},
-	{"date",      4},
+	{"fibEleven", 4},
 	{"uname",     5},
-	{"sl",        6},
-	{"fibEight",  7},
-	{"fibEleven", 8},
+	{"date",      6},
+	{"sl",        7},
+	{"calc",      8},
 };
 
 static int strEq(char *a, char *b) {
