@@ -23,6 +23,21 @@
    the Program Trap handler. */
 void terminateUProc() {
     support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
+    int i;
+
+    /* Release any Swap Pool frames still bookkept under this ASID. ASIDs
+       are reused every time the same program is relaunched (Section
+       9.1), so a stale entry left here would, once evicted later, wrongly
+       invalidate the *next* run's page table for this same ASID. */
+    SYSCALL(PASSEREN, (int) &swapSem, 0, 0);
+    for (i = 0; i < POOLSIZE; i++) {
+        if (swap_pool[i].sw_asid == sup->sup_asid) {
+            swap_pool[i].sw_asid = -1;
+            swap_pool[i].sw_pageNo = -1;
+            swap_pool[i].sw_pte = NULL;
+        }
+    }
+    SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
 
     if (sup->sup_asid == SHELLASID) {
         klog_print("TERM shell-to-master\n");
