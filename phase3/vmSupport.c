@@ -5,6 +5,7 @@
 #include "../headers/const.h"
 #include "../phase2/headers/interrupts.h"
 #include "headers/support.h"
+#include "../headers/klog.h"
 
 /* getDeviceRegAddr() (phase2/interrupts.c) expects the small interrupt
    *line* number (Table 1 of the spec: disk=3, flash=4, ...), not the
@@ -38,6 +39,12 @@ void initSwapStructs() {
 
     RAMTOP(ramtop);
     swapPoolStart = ramtop - (TESTSTACKFRAMES * PAGESIZE) - (POOLSIZE * PAGESIZE);
+
+    klog_print("ramtop=");
+    klog_print_hex(ramtop);
+    klog_print(" swapPoolStart=");
+    klog_print_hex(swapPoolStart);
+    klog_print("\n");
 
     swapSem = 1;
     nextFrame = 0;
