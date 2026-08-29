@@ -118,6 +118,14 @@ void pager() {
     nextFrame = (nextFrame + 1) % POOLSIZE;
     frameAddr = swapPoolStart + (frame * PAGESIZE);
 
+    klog_print("PAGER page=");
+    klog_print_dec((unsigned int) p);
+    klog_print(" frame=");
+    klog_print_dec((unsigned int) frame);
+    klog_print(" occupant=");
+    klog_print_dec((unsigned int) (swap_pool[frame].sw_asid + 1));
+    klog_print("\n");
+
     /* if the frame is occupied, evict its current owner */
     if (swap_pool[frame].sw_asid != -1) {
         /* mark the old owner's PTE invalid ... */
