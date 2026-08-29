@@ -39,7 +39,6 @@ void scheduler(void) {
 
     /* 3. Se ci sono processi soft-blocked facciamo WAIT */
     if (softblockcount > 0) {
-        klog_print("Nessun processo pronto, ma ci sono processi bloccati, facendo WAIT\n");
         current_process = NULL;
 
         setMIE(MIE_ALL & ~MIE_MTIE_MASK);
