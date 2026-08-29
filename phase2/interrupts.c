@@ -189,7 +189,7 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
 */
 
 void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
-    klog_print("Handling non-timer interrupt on line:");
+    //klog_print("Handling non-timer interrupt on line:");
     //klog_print_dec(intLineNo);
     //klog_print(" with bitMap:");
    // klog_print_hex(bitMap);
@@ -226,10 +226,6 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
           //  klog_print("Terminal transmitter ACK written\n");
 
             semIndex = 32 + devNo;
-            klog_print("IRQ tx idx=");
-            klog_print_dec(semIndex);
-            klog_print("\n");
-
             device_semaphores[semIndex]++;
 
           //  klog_print("semaphore value after increment:");
@@ -253,10 +249,6 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
             *(devBase + 1) = ACK;  // scrivi ACK al RECV_COMMAND
 
             semIndex = 40 + devNo;
-            klog_print("IRQ rx idx=");
-            klog_print_dec(semIndex);
-            klog_print("\n");
-
             device_semaphores[semIndex]++;
 
             if (device_semaphores[semIndex] <= 0) {
@@ -278,14 +270,6 @@ void handleNonTimerInterrupt(int intLineNo, unsigned int bitMap) {
         *(devBase + 1) = ACK;
 
         semIndex = (intLineNo - 3) * DEVICES_PER_LINE + devNo;
-        klog_print("IRQ dev idx=");
-        klog_print_dec(semIndex);
-        klog_print(" line=");
-        klog_print_dec(intLineNo);
-        klog_print(" dev=");
-        klog_print_dec(devNo);
-        klog_print("\n");
-
         device_semaphores[semIndex]++;
 
         if (device_semaphores[semIndex] <= 0) {
