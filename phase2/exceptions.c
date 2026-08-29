@@ -429,14 +429,6 @@ void doIO(state_t *state) {
         semIndex = (line - 3) * DEVPERINT + dev;
     }
 
-    klog_print("DOIO block idx=");
-    klog_print_dec(semIndex);
-    klog_print(" line=");
-    klog_print_dec(line);
-    klog_print(" dev=");
-    klog_print_dec(dev);
-    klog_print("\n");
-
     // 1. Save process state
     current_process->p_s = *state;
     updateCPUtime();
