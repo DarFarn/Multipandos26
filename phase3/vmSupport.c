@@ -6,6 +6,7 @@
 #include "../phase2/headers/interrupts.h"
 #include "headers/support.h"
 #include "../headers/klog.h"
+#include "../headers/klog.h"
 
 /* getDeviceRegAddr() (phase2/interrupts.c) expects the small interrupt
    *line* number (Table 1 of the spec: disk=3, flash=4, ...), not the
@@ -102,6 +103,12 @@ void pager() {
        TLB exception reaching the Pager is therefore handled as an
        ordinary page fault. */
 
+    klog_print("PAGER enter asid=");
+    klog_print_dec((unsigned int) sup->sup_asid);
+    klog_print(" pc=");
+    klog_print_hex(savedState->pc_epc);
+    klog_print("\n");
+
     SYSCALL(PASSEREN, (int) &swapSem, 0, 0);
 
     p = getPageNumber();
@@ -126,6 +133,9 @@ void pager() {
            store before reusing it */
         status = flashRW(swap_pool[frame].sw_asid, swap_pool[frame].sw_pageNo, frameAddr, FLASHWRITE);
         if (status != READY) {
+            klog_print("PAGER evict-write FAIL status=");
+            klog_print_hex((unsigned int) status);
+            klog_print("\n");
             SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
             terminateUProc();
             return;
@@ -136,10 +146,23 @@ void pager() {
        store */
     status = flashRW(sup->sup_asid, p, frameAddr, FLASHREAD);
     if (status != READY) {
+        klog_print("PAGER read FAIL asid=");
+        klog_print_dec((unsigned int) sup->sup_asid);
+        klog_print(" page=");
+        klog_print_dec((unsigned int) p);
+        klog_print(" status=");
+        klog_print_hex((unsigned int) status);
+        klog_print("\n");
         SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
         terminateUProc();
         return;
     }
+
+    klog_print("PAGER done asid=");
+    klog_print_dec((unsigned int) sup->sup_asid);
+    klog_print(" page=");
+    klog_print_dec((unsigned int) p);
+    klog_print("\n");
 
     /* update the Swap Pool table */
     swap_pool[frame].sw_asid = sup->sup_asid;
