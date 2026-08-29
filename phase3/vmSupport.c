@@ -178,12 +178,17 @@ void pager() {
     swap_pool[frame].sw_pte = &sup->sup_privatePgTbl[p];
 
     /* update the Current Process's Page Table entry and, atomically,
-       the TLB */
+       the TLB: install the fresh mapping directly rather than just
+       dropping the whole TLB and relying on the next reference to
+       trigger a refill. */
     sup->sup_privatePgTbl[p].pte_entryLO = frameAddr | DIRTYON | VALIDON;
 
     statusReg = getSTATUS();
     setSTATUS(statusReg & ~MSTATUS_MIE_MASK);
     TLBCLR();
+    setENTRYHI(sup->sup_privatePgTbl[p].pte_entryHI);
+    setENTRYLO(sup->sup_privatePgTbl[p].pte_entryLO);
+    TLBWR();
     setSTATUS(statusReg);
 
     SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
