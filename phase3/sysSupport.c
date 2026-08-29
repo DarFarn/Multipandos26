@@ -5,6 +5,7 @@
 #include "../headers/const.h"
 #include "../phase2/headers/interrupts.h"
 #include "headers/support.h"
+#include "../headers/klog.h"
 
 /* Terminal status codes carry the completion code in the low byte and
    (for received characters) the character itself in the upper bits. */
@@ -23,10 +24,15 @@
 void terminateUProc() {
     support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
 
-    if (sup->sup_asid == SHELLASID)
+    if (sup->sup_asid == SHELLASID) {
+        klog_print("TERM shell-to-master\n");
         SYSCALL(VERHOGEN, (int) &masterSem, 0, 0);
-    else
+    } else {
+        klog_print("TERM child-to-shell asid=");
+        klog_print_dec((unsigned int) sup->sup_asid);
+        klog_print("\n");
         SYSCALL(VERHOGEN, (int) &shellSem, 0, 0);
+    }
 
     SYSCALL(TERMPROCESS, 0, 0, 0);
 }
@@ -176,13 +182,16 @@ static void supSyscallHandler(state_t *state) {
             return; /* never reached */
     }
 
-    state->pc_epc += 4;
+    /* pc_epc was already advanced by the Nucleus's exceptionHandler(),
+       once, for every SYSCALL exception, before passing it up here;
+       incrementing it again would skip an extra instruction on resume. */
     LDST(state);
 }
 
 /* Support Level Program Trap exception handler: terminate the offending
    U-proc in an orderly fashion. */
 static void supProgramTrapHandler() {
+    klog_print("PROGRAM TRAP\n");
     terminateUProc();
 }
 
