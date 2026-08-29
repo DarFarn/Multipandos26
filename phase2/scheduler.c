@@ -15,7 +15,6 @@ extern int softblockcount;
 extern struct list_head readyQueue;
 extern struct pcb_t* current_process;
 cpu_t processStartTime; // forse va inizializzato a 0, da vedere!!!!!!!!!!!!!!!!!!!!!!!!
-extern pcb_t *activeProcs[MAXPROC]; // array che contiene i puntatori a tutti i processi attivi, da 0 a MAXPROC-1, se un indice è null allora il processo è terminato
 
 void scheduler(void) { 
     // klog_print("ciao sei nello scheduler :)\n");
@@ -51,23 +50,9 @@ void scheduler(void) {
         WAIT();
     }
 
-    if (emptyProcQ(&readyQueue) && processCount > 0 && softblockcount == 0) {
-        // cerca un processo attivo
-        for (int i = 0; i < MAXPROC; i++) {
-            if (activeProcs[i] != NULL) {
-                current_process = activeProcs[i];
-                LDST(&current_process->p_s);
-            }
-        }
-        // se non troviamo nulla siamo in DEADLOCK
-       
-        HALT();
-    }
-    if (processCount == 0) {
-        
-        HALT();
-    }
-    PANIC(); /* Non dovrebbe mai arrivarci */
+    /* 4. Nessun processo pronto, nessuno bloccato su I/O reale, ma ci sono
+       ancora processi vivi: deadlock irrecuperabile. */
+    PANIC();
 }
 
 
