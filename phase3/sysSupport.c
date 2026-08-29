@@ -5,6 +5,7 @@
 #include "../headers/const.h"
 #include "../phase2/headers/interrupts.h"
 #include "headers/support.h"
+#include "../headers/klog.h"
 
 /* Terminal status codes carry the completion code in the low byte and
    (for received characters) the character itself in the upper bits. */
@@ -22,6 +23,10 @@
    the Program Trap handler. */
 void terminateUProc() {
     support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
+
+    klog_print("TERM asid=");
+    klog_print_dec((unsigned int) sup->sup_asid);
+    klog_print("\n");
 
     if (sup->sup_asid == SHELLASID)
         SYSCALL(VERHOGEN, (int) &masterSem, 0, 0);
@@ -137,9 +142,14 @@ static void execute(state_t *state) {
     if (asid < 2 || asid > UPROCMAX)
         return; /* silently ignore an out-of-range request */
 
+    klog_print("EXEC asid=");
+    klog_print_dec((unsigned int) asid);
+    klog_print("\n");
+
     initUProc(asid);
 
     SYSCALL(PASSEREN, (int) &shellSem, 0, 0);
+    klog_print("EXEC resumed\n");
 }
 
 /* Support Level SYSCALL exception handler: dispatches SYS1, SYS2, SYS4,
@@ -192,6 +202,14 @@ void supGeneralExceptionHandler() {
     support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
     state_t *state = &sup->sup_exceptState[GENERALEXCEPT];
     unsigned int excCode = state->cause & 0xFFu;
+
+    klog_print("GEN asid=");
+    klog_print_dec((unsigned int) sup->sup_asid);
+    klog_print(" exc=");
+    klog_print_dec(excCode);
+    klog_print(" a0=");
+    klog_print_hex(state->reg_a0);
+    klog_print("\n");
 
     if (excCode == 8 || excCode == 11)
         supSyscallHandler(state);
