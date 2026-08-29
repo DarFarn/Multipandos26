@@ -5,6 +5,7 @@
 #include "../headers/const.h"
 #include "../phase2/headers/interrupts.h"
 #include "headers/support.h"
+#include "../headers/klog.h"
 
 /* getDeviceRegAddr() (phase2/interrupts.c) expects the small interrupt
    *line* number (Table 1 of the spec: disk=3, flash=4, ...), not the
@@ -40,11 +41,18 @@ void initSwapStructs() {
 static int flashRW(int asid, int block, memaddr frameAddr, int command) {
     unsigned int *devReg = getDeviceRegAddr(FLASH_INTLINE, asid - 1);
     unsigned int commandValue;
+    int status;
+
+    SYSCALL(PASSEREN, (int) &flashSem[asid - 1], 0, 0);
 
     devReg[2] = (unsigned int) frameAddr; /* DATA0 */
     commandValue = (block << 8) | command;
 
-    return SYSCALL(DOIO, (int) &devReg[1], (int) commandValue, 0); /* COMMAND */
+    status = SYSCALL(DOIO, (int) &devReg[1], (int) commandValue, 0); /* COMMAND */
+
+    SYSCALL(VERHOGEN, (int) &flashSem[asid - 1], 0, 0);
+
+    return status;
 }
 
 /* Returns the logical page number (0..31) of the address currently
@@ -77,17 +85,33 @@ void pager() {
        TLB exception reaching the Pager is therefore handled as an
        ordinary page fault. */
 
+    klog_print("PG in  asid=");
+    klog_print_dec((unsigned int) sup->sup_asid);
+    klog_print("\n");
+
     SYSCALL(PASSEREN, (int) &swapSem, 0, 0);
+    klog_print("PG got swapSem\n");
 
     p = getPageNumber();
+    klog_print("PG page=");
+    klog_print_dec((unsigned int) p);
+    klog_print("\n");
 
     /* pick a frame (FIFO) */
     frame = nextFrame;
     nextFrame = (nextFrame + 1) % POOLSIZE;
     frameAddr = SWAPPOOLSTART + (frame * PAGESIZE);
+    klog_print("PG frame=");
+    klog_print_dec((unsigned int) frame);
+    klog_print("\n");
 
     /* if the frame is occupied, evict its current owner */
     if (swap_pool[frame].sw_asid != -1) {
+        klog_print("PG evict asid=");
+        klog_print_dec((unsigned int) swap_pool[frame].sw_asid);
+        klog_print(" page=");
+        klog_print_dec((unsigned int) swap_pool[frame].sw_pageNo);
+        klog_print("\n");
 
         /* mark the old owner's PTE invalid ... */
         swap_pool[frame].sw_pte->pte_entryLO &= ~VALIDON;
@@ -100,8 +124,13 @@ void pager() {
 
         /* write the (possibly dirty) frame back to its owner's backing
            store before reusing it */
+        klog_print("PG evict-write start\n");
         status = flashRW(swap_pool[frame].sw_asid, swap_pool[frame].sw_pageNo, frameAddr, FLASHWRITE);
+        klog_print("PG evict-write status=");
+        klog_print_hex((unsigned int) status);
+        klog_print("\n");
         if (status != READY) {
+            klog_print("PG evict-write FAILED\n");
             SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
             terminateUProc();
             return;
@@ -110,8 +139,13 @@ void pager() {
 
     /* bring the missing page in from the Current Process's own backing
        store */
+    klog_print("PG read start\n");
     status = flashRW(sup->sup_asid, p, frameAddr, FLASHREAD);
+    klog_print("PG read status=");
+    klog_print_hex((unsigned int) status);
+    klog_print("\n");
     if (status != READY) {
+        klog_print("PG read FAILED\n");
         SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
         terminateUProc();
         return;
@@ -132,6 +166,7 @@ void pager() {
     setSTATUS(statusReg);
 
     SYSCALL(VERHOGEN, (int) &swapSem, 0, 0);
+    klog_print("PG done\n");
 
     LDST(savedState);
 }
