@@ -40,18 +40,19 @@ void klog_print(char *str) {
 */
 void klog_print_dec(unsigned int num) {
     const char digits[] = "0123456789";
-    if(num >= 10){
-        do {
-            klog_buffer[klog_line_index][klog_char_index] = digits[num % 10];
+    char tmp[11];
+    int i = 0;
+
+    if (num == 0) {
+        tmp[i++] = digits[0];
+    } else {
+        while (num > 0) {
+            tmp[i++] = digits[num % 10];
             num /= 10;
-            next_char();
-        } while (num > 0);
-    }else{
-        int buff = num % 10;
-        num /= 10;
-        klog_buffer[klog_line_index][klog_char_index] = digits[num % 10];
-        next_char();
-        klog_buffer[klog_line_index][klog_char_index] = digits[buff];
+        }
+    }
+    while (i > 0) {
+        klog_buffer[klog_line_index][klog_char_index] = tmp[--i];
         next_char();
     }
 }
@@ -59,12 +60,21 @@ void klog_print_dec(unsigned int num) {
 // Princ a number in hexadecimal format (best for addresses)
 void klog_print_hex(unsigned int num) {
     const char digits[] = "0123456789ABCDEF";
+    char tmp[8];
+    int i = 0;
 
-    do {
-        klog_buffer[klog_line_index][klog_char_index] = digits[num % 16];
-        num /= 16;
+    if (num == 0) {
+        tmp[i++] = digits[0];
+    } else {
+        while (num > 0) {
+            tmp[i++] = digits[num % 16];
+            num /= 16;
+        }
+    }
+    while (i > 0) {
+        klog_buffer[klog_line_index][klog_char_index] = tmp[--i];
         next_char();
-    } while (num > 0);
+    }
 }
 
 
