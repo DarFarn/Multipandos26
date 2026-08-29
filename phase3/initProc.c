@@ -15,9 +15,16 @@ int shellSem = 0;
 int termReadSem = 1;
 int termWriteSem = 1;
 
+/* One mutual exclusion semaphore per (potentially) shareable peripheral
+   I/O device; for Phase 3 that means the eight flash devices (indexed
+   by ASID - 1), see Section 9 of the spec. */
+int flashSem[UPROCMAX];
+
 /* ===================== TEST (InstantiatorProcess) ===================== */
 
 void test() {
+
+    int i;
 
     initSwapStructs();
 
@@ -25,6 +32,8 @@ void test() {
     shellSem = 0;
     termReadSem = 1;
     termWriteSem = 1;
+    for (i = 0; i < UPROCMAX; i++)
+        flashSem[i] = 1;
 
     /* launch the shell; it is the only U-proc allowed to request SYS6 */
     initUProc(SHELLASID);
@@ -76,13 +85,3 @@ void initUProc(int asid) {
 
     SYSCALL(CREATEPROCESS, (int) &newState, PROCESS_PRIO_LOW, (int) sup);
 }
-
-
-
-
-
-
-
-
-
-
