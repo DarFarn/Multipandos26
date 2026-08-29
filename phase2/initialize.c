@@ -73,7 +73,7 @@ int main(void)
     p->p_s.pc_epc = (memaddr)test;                     // PC
     p->p_s.status = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M; // kernel mode + interrupt
     p->p_s.mie = MIE_ALL;                              // abilita interrupt
-    p->p_s.reg_sp = position - (10 * PAGESIZE);              // in teoria stack pointer caricato in ramtop
+    p->p_s.reg_sp = position - (TESTSTACKFRAMES * PAGESIZE);              // in teoria stack pointer caricato in ramtop
     insertProcQ(&readyQueue, p);                       // mettoin ready queue
     processCount = 1;  
     
