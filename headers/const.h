@@ -200,15 +200,11 @@
 #define VMDISK        0
 #define MAXPAGES      32
 #define USERPGTBLSIZE MAXPAGES
-#define OSFRAMES      32
 
-/* Swap Pool: placed right after the (overestimated) kernel image, see
-   Phase 3 spec Section 4.1 */
-#define SWAPPOOLSTART (RAMSTART + (OSFRAMES * PAGESIZE))
-
-// #define FLASHPOOLSTART (RAMSTART + (OSFRAMES * PAGESIZE))
-#define DISKPOOLSTART  (FLASHPOOLSTART + (DEVPERINT * PAGESIZE))
-#define FRAMEPOOLSTART (DISKPOOLSTART + (DEVPERINT * PAGESIZE))
+/* Frames reserved at the very top of RAM for the Instantiator process's
+   own stack (see phase2/initialize.c), which the Swap Pool must not
+   encroach on. */
+#define TESTSTACKFRAMES 10
 
 #define RAMTOP(T) ((T) = ((*((int *)RAMBASEADDR)) + (*((int *)RAMBASESIZE))))
 
