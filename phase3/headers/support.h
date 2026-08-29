@@ -45,6 +45,7 @@ extern int shellSem;  /* V'ed by any U-proc launched by the shell         */
 extern int swapSem;   /* mutual exclusion over the Swap Pool table        */
 extern int termReadSem;  /* mutual exclusion over the terminal's receiver */
 extern int termWriteSem; /* mutual exclusion over the terminal's transmitter */
+extern int flashSem[UPROCMAX]; /* mutual exclusion over each flash device */
 
 extern swap_t swap_pool[POOLSIZE];
 
