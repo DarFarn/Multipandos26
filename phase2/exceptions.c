@@ -429,17 +429,19 @@ void doIO(state_t *state) {
         semIndex = (line - 3) * DEVPERINT + dev;
     }
 
-    //klog_print("semIndex:"); klog_print_dec(semIndex);
-//    klog_print("line:");     klog_print_dec(line);
-  //  klog_print("dev:");      klog_print_dec(dev);
-    //klog_print("subword:");  klog_print_dec(subword);
+    klog_print("DOIO block idx=");
+    klog_print_dec(semIndex);
+    klog_print(" line=");
+    klog_print_dec(line);
+    klog_print(" dev=");
+    klog_print_dec(dev);
+    klog_print("\n");
 
     // 1. Save process state
     current_process->p_s = *state;
     updateCPUtime();
 
     // 2. Block the process BEFORE writing the command
-    //klog_print("sem before decrement:"); klog_print_dec(device_semaphores[semIndex]);
     device_semaphores[semIndex]--;
     current_process->p_semAdd = &device_semaphores[semIndex];
     if (insertBlocked(&device_semaphores[semIndex], current_process) != 0) {
