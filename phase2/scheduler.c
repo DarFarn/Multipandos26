@@ -16,24 +16,25 @@ extern struct list_head readyQueue;
 extern struct pcb_t* current_process;
 cpu_t processStartTime; // forse va inizializzato a 0, da vedere!!!!!!!!!!!!!!!!!!!!!!!!
 
-void scheduler(void) { 
-    // klog_print("ciao sei nello scheduler :)\n");
-     /* 1. Se c’è un processo ready lo eseguiamo */
-
+void scheduler(void) {
     /* 1. Se c’è un processo ready lo eseguiamo */
     if (!emptyProcQ(&readyQueue)) {
-      //  klog_print("Processo pronto, dispatching\n");
         current_process = removeProcQ(&readyQueue);
         setTIMER(TIMESLICE * (*((cpu_t *) TIMESCALEADDR)));
         LDST(&current_process->p_s);
-        int pid = current_process->p_pid;
-        klog_print("PID del processo dispatchato:");
-        klog_print_dec(pid);
+    }
+
+    /* readyQueue is empty from here on: this is the rare/interesting case,
+       log it (once per empty-queue decision, not per dispatch). */
+    if (softblockcount == 0) {
+        klog_print("SCHED empty procCount=");
+        klog_print_dec((unsigned int) processCount);
+        klog_print("\n");
     }
 
     /* 2. Se non ci sono più processi HALT del sistema */
     if (processCount == 0) {
-
+        klog_print("SCHED HALT\n");
         HALT();
     }
 
@@ -51,6 +52,7 @@ void scheduler(void) {
 
     /* 4. Nessun processo pronto, nessuno bloccato su I/O reale, ma ci sono
        ancora processi vivi: deadlock irrecuperabile. */
+    klog_print("SCHED PANIC\n");
     PANIC();
 }
 
