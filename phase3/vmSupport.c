@@ -107,6 +107,8 @@ void pager() {
     klog_print_dec((unsigned int) sup->sup_asid);
     klog_print(" pc=");
     klog_print_hex(savedState->pc_epc);
+    klog_print(" swapSem=");
+    klog_print_dec((unsigned int) (swapSem + 100));
     klog_print("\n");
 
     SYSCALL(PASSEREN, (int) &swapSem, 0, 0);
