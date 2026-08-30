@@ -29,6 +29,9 @@ void terminateUProc() {
        are reused every time the same program is relaunched (Section
        9.1), so a stale entry left here would, once evicted later, wrongly
        invalidate the *next* run's page table for this same ASID. */
+    klog_print("TERM cleanup swapSem=");
+    klog_print_dec((unsigned int) (swapSem + 100));
+    klog_print("\n");
     SYSCALL(PASSEREN, (int) &swapSem, 0, 0);
     for (i = 0; i < POOLSIZE; i++) {
         if (swap_pool[i].sw_asid == sup->sup_asid) {
